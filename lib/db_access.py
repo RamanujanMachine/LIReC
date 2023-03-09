@@ -126,3 +126,14 @@ class LIReC_DB:
         return a list of PCFs from the DB
         """
         return [PCF.from_canonical_form(c) for c in self.get_canonical_forms()]
+
+    def get_original_pcfs(self) -> List[PCF]:
+        all_cfs = self.cfs.all()
+        pcfs = []
+        for cf in all_cfs:
+            try:
+                pcfs.append(PCF(cf.original_a, cf.original_b))
+            except AttributeError:
+                # This means that there is no original form in the db
+                pass
+        return pcfs

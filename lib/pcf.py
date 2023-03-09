@@ -77,7 +77,7 @@ class PCF:
             for factor in a_factors:
                 if factor in b_factors and factor.compose(Poly(n-1)) in b_factors:
                     self.a = Poly(cancel(self.a / factor))
-                    self.b = Poly(cancel(self.b / (factor * factor.compose(Poly(n - 1)))))
+                    self.b = Poly(cancel(self.b / (factor * factor.compose(Poly(n - 1)))), n)
                     deflated = True
     
     @staticmethod

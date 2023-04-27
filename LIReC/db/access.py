@@ -11,8 +11,8 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import sessionmaker
 from psycopg2.errors import UniqueViolation
 from typing import Tuple, List, Dict, Generator
-from LIReC.config import get_connection_string, configuration
-from LIReC.lib import models
+from LIReC.db.config import get_connection_string, auto_pcf_config
+from LIReC.db import models
 from LIReC.lib.pcf import *
 
 class LIReC_DB:
@@ -78,7 +78,7 @@ class LIReC_DB:
             raise PCFCalc.IllegalPCFException('Irrational or Complex roots in partial numerator are not allowed.')
         #calculation = LIReC_DB.calc_pcf(pcf, depth) if depth else None
         # By default the coefs are sympy.core.numbers.Integer but sql need them to be integers
-        return self.add_pcf_canonical(pcf, PCFCalc(pcf).run(**configuration['auto_pcf']))
+        return self.add_pcf_canonical(pcf, PCFCalc(pcf).run(**auto_pcf_config))
     
     def add_pcfs(self, pcfs: Generator[PCF, None, None]) -> Tuple[List[models.PcfCanonicalConstant], Dict[str, List[PCF]]]:
         """

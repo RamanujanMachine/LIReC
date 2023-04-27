@@ -31,7 +31,7 @@ from collections import Counter
 from functools import reduce
 from operator import mul
 from traceback import format_exc
-from LIReC.lib import models, db_access
+from LIReC.db import models, access
 
 mp.mp.dps = 2000
 
@@ -183,7 +183,7 @@ def run_query(filters=None, degree=None, bulk=None):
         return []
     bulk = bulk if bulk else BULK_SIZE
     getLogger(LOGGER_NAME).debug(f'Starting to check relations, using bulk size {bulk}')
-    db = db_access.LIReC_DB()
+    db = access.LIReC_DB()
     results = [db.session.query(get_const_class(const_type)).join(models.Constant).filter(*get_filters(filters, const_type)).order_by(func.random()).limit(bulk).all() for const_type in bulk_types]
     # apparently postgresql is really slow with the order_by(random) part,
     # but on 1000 CFs it only takes 1 second, which imo is worth it since
@@ -218,7 +218,7 @@ def execute_job(query_data, filters=None, degree=None, bulk=None, manual=False):
             getLogger(LOGGER_NAME).info(f'redundant degree detected! reducing to {degree}')
         
         query_data = transpose(query_data).tolist()
-        db = db_access.LIReC_DB()
+        db = access.LIReC_DB()
         subsets = [combinations(get_consts_from_query(const_type, query_data) if const_type in BULK_TYPES else get_consts(const_type, db, {**filters, 'global':global_filters}), filters[const_type]['count']) for const_type in filters]
         exponents = get_exponents(degree, total_consts)
         
@@ -244,7 +244,7 @@ def execute_job(query_data, filters=None, degree=None, bulk=None, manual=False):
                         except:
                             db.session.rollback()
                             #db.session.close()
-                            #db = db_access.LIReC_DB()
+                            #db = access.LIReC_DB()
                             if try_count == 1:
                                 getLogger(LOGGER_NAME).warn('Failed to commit once, trying again.')
                             else:

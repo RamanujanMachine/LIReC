@@ -6,7 +6,7 @@ import signal
 import numpy as np
 import os
 import sys
-from LIReC.config import configuration
+from LIReC.jobs.config import configuration
 from LIReC.lib.pool import WorkerPool
 
 LOGGER_NAME = 'job_logger'

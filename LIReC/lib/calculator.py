@@ -5,7 +5,7 @@ from mpmath import mpf
 from operator import mul
 from sympy import Poly, Symbol, compose
 from typing import List
-from LIReC.lib.models import Constant, PcfFamily
+from LIReC.db.models import Constant, PcfFamily
 from LIReC.lib.pcf import *
 
 class DerivedConstants:

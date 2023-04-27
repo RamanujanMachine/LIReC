@@ -13,7 +13,7 @@ setup(
     # Because of this, upgrading to Python3.11 will also require these packages to update.
     python_requires=">=3.8.10",
     description="Library of Integer RElations and Constants",
-    packages=['LIReC', 'LIReC.lib', 'LIReC.jobs', "LIReC.su"],
+    packages=['LIReC', 'LIReC.lib', 'LIReC.jobs', "LIReC.db"], # devutils folder intentionally omitted
     install_requires=[
         'sqlalchemy>=2.0.5',
         'sympy>=1.5.1',

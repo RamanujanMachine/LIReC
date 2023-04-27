@@ -2,8 +2,8 @@ from functools import reduce
 from operator import add
 from sympy import Poly, Symbol
 import sys
-from LIReC.lib.db_access import LIReC_DB
-from LIReC.lib.models import *
+from LIReC.db.access import LIReC_DB
+from LIReC.db.models import *
 from LIReC.jobs.job_poly_pslq import get_exponents
 
 def main():

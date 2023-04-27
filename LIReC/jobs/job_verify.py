@@ -1,7 +1,7 @@
 from logging import getLogger
 from logging.config import fileConfig
 from traceback import format_exc
-from LIReC.lib import models, db_access
+from LIReC.db import models, access
 from LIReC.lib.pslq_utils import poly_verify
 
 LOGGER_NAME = 'job_logger'
@@ -10,7 +10,7 @@ PRECISION_TOLERANCE = 1.1
 def execute_job():
     try:
         fileConfig('logging.config', defaults={'log_filename': 'verify'})
-        db = db_access.LIReC_DB()
+        db = access.LIReC_DB()
         rels = db.session.query(models.Relation).all()
         
         # way faster to query in bulk and filter locally than to query relations individually!

@@ -6,8 +6,7 @@ from operator import mul
 from sympy import Poly, Symbol
 from sympy.core.numbers import Integer, Rational
 from LIReC.lib.pcf import PCF
-from LIReC.lib.db_access import LIReC_DB
-from LIReC.config import configuration
+from LIReC.db.access import LIReC_DB
 
 fileConfig('logging.config', defaults={'log_filename': 'generate_random'})
 
@@ -72,18 +71,9 @@ def execute_job(bulk=0, max_deg=-1, max_coeff=-1, max_abs_root=-1, num_denom_fac
     db.session.close()
 
 def main():
-    '''
-    Example config:
-    configuration = {
-        ...
-        'add_random_pcfs': {
-            'bulk': 100, 'max_deg': 3, 'max_coeff': 50, 'max_abs_root': 3, 'num_denom_factor': (2, True)
-        },
-        ...
-    }
-    '''
-    if 'add_random_pcfs' in configuration:
-        execute_job(**configuration['add_random_pcfs'])
+    config = {'bulk': 100, 'max_deg': 3, 'max_coeff': 50, 'max_abs_root': 3, 'num_denom_factor': (2, True)}
+    if config:
+        execute_job(**config)
     else:
         execute_job() # with defaults...
 

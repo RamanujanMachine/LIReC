@@ -89,8 +89,8 @@ def get_delta_no_limit(lattice_cell, metadata='', location={}):
 import itertools
 from mpmath import mpf, ln, e, nstr, pi, sqrt, zeta
 import math
-from LIReC.lib.db_access import LIReC_DB
-from LIReC.lib.models import NamedConstant
+from LIReC.db.access import LIReC_DB
+from LIReC.db.models import NamedConstant
 
 possible_constants = [ln(2), e, e**2, e**0.5, pi, zeta(3), zeta(2),
                       mpf(2)**(1/mpf(3)), mpf(2)**(2/mpf(3)), mpf(5)**(1/mpf(3)), mpf(5)**(2/mpf(3)),  

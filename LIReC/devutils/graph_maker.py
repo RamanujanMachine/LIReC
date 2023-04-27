@@ -1,5 +1,5 @@
-from LIReC.lib.db_access import LIReC_DB
-from LIReC.lib.models import *
+from LIReC.db.access import LIReC_DB
+from LIReC.db.models import *
 
 def make_graph(const_name):
     db = LIReC_DB()

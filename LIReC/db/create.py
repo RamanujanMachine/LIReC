@@ -3,8 +3,8 @@ from decimal import Decimal
 import os
 from traceback import format_exc
 from urllib.request import urlopen
-from LIReC.config import get_connection_string
-from LIReC.lib import models, db_access
+from LIReC.db.config import get_connection_string
+from LIReC.db import models, access
 from LIReC.lib.calculator import Constants
 
 COMMAND = 'psql {connection_string} < LIReC/lib/create_db.sql'
@@ -41,7 +41,7 @@ if __name__ == '__main__':
     precision = 4000
     print(f'Using {precision} digits of precision')
     Constants.set_precision(precision)
-    db = db_access.LIReC_DB()
+    db = access.LIReC_DB()
     for const in Constants.__dict__.keys():
         if const[0] == '_' or const == 'set_precision':
             continue

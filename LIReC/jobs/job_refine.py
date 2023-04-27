@@ -15,7 +15,7 @@ from os import cpu_count
 from traceback import format_exc
 from sqlalchemy import or_, nullsfirst, nullslast
 from LIReC.config import configuration
-from LIReC.lib import models, db_access
+from LIReC.db import models, access
 from LIReC.lib.calculator import Universal
 
 LOGGER_NAME = 'job_logger'
@@ -25,7 +25,7 @@ DEBUG_PRINT = True
 def run_query(consts_per_core=5, greedy_precision=0):
     fileConfig('LIReC/logging.config', defaults={'log_filename': 'refining_manager'})
     total_consts = configuration['jobs_to_run']['refine'].get('async_cores', cpu_count()) * consts_per_core
-    db = db_access.LIReC_DB()
+    db = access.LIReC_DB()
     results = []
     while len(results) < total_consts:
         query = db.session.query(models.Constant)
@@ -52,7 +52,7 @@ def get_extensions(db, consts):
 def execute_job(query_data):
     try: # whole thing must be wrapped so it gets logged
         fileConfig('LIReC/logging.config', defaults={'log_filename': f'refining_worker_{getpid()}'})
-        db = db_access.LIReC_DB()
+        db = access.LIReC_DB()
         extensions = get_extensions(db, query_data)
         refined = []
         for const, exts in zip(query_data, extensions):
@@ -75,7 +75,7 @@ def execute_job(query_data):
         getLogger(LOGGER_NAME).error(f'Exception in execute job: {format_exc()}')
 
 def summarize_results(results):
-    db = db_access.LIReC_DB()
+    db = access.LIReC_DB()
     try:
         results = [r for r in results if r]
         getLogger(LOGGER_NAME).info(f'refined a total of {len(results)} constants')

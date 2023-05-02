@@ -4,12 +4,11 @@ from enum import Enum
 import gmpy2
 from gmpy2 import mpz, xmpz, mpq
 import mpmath as mp
-from sympy import Poly, Symbol, gcd as sgcd, cancel
+from sympy import Poly, gcd as sgcd, cancel
+from sympy.abc import n
 from time import time
 from typing import List, Tuple
 CanonicalForm = Tuple[List[int], List[int]]
-
-n = Symbol('n')
 
 
 class PCF:
@@ -77,7 +76,7 @@ class PCF:
             for factor in a_factors:
                 if factor in b_factors and factor.compose(Poly(n-1)) in b_factors:
                     self.a = Poly(cancel(self.a / factor))
-                    self.b = Poly(cancel(self.b / (factor * factor.compose(Poly(n - 1)))), n)
+                    self.b = Poly(cancel(self.b / (factor * factor.compose(Poly(n - 1)))))
                     deflated = True
     
     @staticmethod
@@ -88,7 +87,6 @@ class PCF:
         Notice there may be many pcfs that fit the same canonical form, this returns just one of them.
         TODO: add link to the doc which explains this
         '''
-        n = Symbol('n')
         a = Poly(canonical_form[1], n).compose(Poly(n + 1))
         b = Poly(canonical_form[0], n) * a
         return PCF(a.all_coeffs(), b.all_coeffs())

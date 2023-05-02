@@ -13,6 +13,7 @@ from psycopg2.errors import UniqueViolation
 from typing import Tuple, List, Dict, Generator
 from LIReC.db.config import get_connection_string, auto_pcf_config
 from LIReC.db import models
+from LIReC.lib.calculator import Universal
 from LIReC.lib.pcf import *
 
 class LIReC_DB:
@@ -35,19 +36,7 @@ class LIReC_DB:
         # TODO implement add_pcf_canonicals that uploads multiple at a time
         const = models.PcfCanonicalConstant()
         const.base = models.Constant()
-        const.original_a = [int(coef) for coef in pcf.a.all_coeffs()]
-        const.original_b = [int(coef) for coef in pcf.b.all_coeffs()]
-        top, bot = pcf.get_canonical_form()
-        const.P = [int(coef) for coef in top.all_coeffs()]
-        const.Q = [int(coef) for coef in bot.all_coeffs()]
-        if calculation:
-            getcontext().prec = min(calculation.precision + 10, 16000)
-            const.base.value = Decimal(str(calculation.value))
-            const.base.precision = calculation.precision
-            const.last_matrix = reduce(lambda a, b: a + ',' + str(b), calculation.last_matrix[1:], str(calculation.last_matrix[0]))
-            const.depth = calculation.depth
-            const.convergence = calculation.convergence
-        self.session.add(const)
+        self.session.add(Universal.fill_pcf_canonical(const, pcf, calculation))
         
         # yes, commit and check error is better than preemptively checking if unique and then adding,
         # since the latter is two SQL commands instead of one, which breaks on "multithreading" for example
@@ -128,12 +117,4 @@ class LIReC_DB:
         return [PCF.from_canonical_form(c) for c in self.get_canonical_forms()]
 
     def get_original_pcfs(self) -> List[PCF]:
-        all_cfs = self.cfs.all()
-        pcfs = []
-        for cf in all_cfs:
-            try:
-                pcfs.append(PCF(cf.original_a, cf.original_b))
-            except AttributeError:
-                # This means that there is no original form in the db
-                pass
-        return pcfs
+        return [PCF(cf.original_a, cf.original_b) for cf in self.cfs if cf.original_a and cf.original_b]

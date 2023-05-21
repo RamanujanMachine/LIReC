@@ -1,4 +1,4 @@
-auto_pcf_config - {
+auto_pcf_config = {
     'depth': 10000,
     'precision': 50,
     'force_fr': True,

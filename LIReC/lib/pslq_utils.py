@@ -51,13 +51,17 @@ def poly_check(consts, degree = None, order = None, exponents = None):
         pass 
     return None, None, None
 
+
+# ===== COPYPASTED FROM mpmath\identification.py WITH MODIFICATIONS =====
+# Intended to allow PSLQ to run with unbounded steps/maxcoeff
+
 """
 Implements the PSLQ algorithm for integer relation detection,
 and derivative algorithms for constant recognition.
 """
 
-from .libmp.backend import xrange
-from .libmp import int_types, sqrt_fixed
+from mp.libmp.backend import xrange
+from mp.libmp import int_types, sqrt_fixed
 
 # round to nearest integer (can be done more elegantly...)
 def round_fixed(x, prec):
@@ -66,8 +70,8 @@ def round_fixed(x, prec):
 class IdentificationMethods(object):
     pass
 
-
-def pslq(ctx, x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
+ctx = mp.mp
+def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
     r"""
     Given a vector of real numbers `x = [x_0, x_1, ..., x_n]`, ``pslq(x)``
     uses the PSLQ algorithm to find a list of integers
@@ -278,7 +282,7 @@ def pslq(ctx, x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
                 A[i,k] = A[i,k] - (t*A[j,k] >> prec)
                 B[k,j] = B[k,j] + (t*B[k,i] >> prec)
     # Main algorithm
-    for REP in range(maxsteps):
+    for REP in count():
         # Step 1
         m = -1
         szmax = -1
@@ -328,7 +332,7 @@ def pslq(ctx, x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
         # large drop (several orders of magnitude), that indicates a
         # "high quality" relation was detected. Reporting this to
         # the user somehow might be useful.
-        best_err = maxcoeff<<prec
+        best_err = mp.inf if mp.isinf(maxcoeff) else maxcoeff<<prec
         for i in xrange(1, n+1):
             err = abs(y[i])
             # Maybe we are done?
@@ -354,14 +358,14 @@ def pslq(ctx, x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
         if verbose:
             print("%i/%i:  Error: %8s   Norm: %s" % \
                 (REP, maxsteps, ctx.nstr(best_err / ctx.mpf(2)**prec, 1), norm))
-        if norm >= maxcoeff:
+        if norm >= maxcoeff or REP >= maxsteps:
             break
     if verbose:
         print("CANCELLING after step %i/%i." % (REP, maxsteps))
         print("Could not find an integer relation. Norm bound: %s" % norm)
     return None
 
-def findpoly(ctx, x, n=1, **kwargs):
+def findpoly(x, n=1, **kwargs):
     r"""
     ``findpoly(x, n)`` returns the coefficients of an integer
     polynomial `P` of degree at most `n` such that `P(x) \approx 0`.
@@ -474,7 +478,7 @@ def findpoly(ctx, x, n=1, **kwargs):
     xs = [ctx.mpf(1)]
     for i in range(1,n+1):
         xs.append(x**i)
-        a = ctx.pslq(xs, **kwargs)
+        a = pslq(xs, **kwargs)
         if a is not None:
             return a[::-1]
 
@@ -536,7 +540,7 @@ def prodstring(r, constants):
     if num: return num
     if den: return "1/(%s)" % den
 
-def quadraticstring(ctx,t,a,b,c):
+def quadraticstring(t,a,b,c):
     if c < 0:
         a,b,c = -a,-b,-c
     u1 = (-b+ctx.sqrt(b**2-4*a*c))/(2*c)
@@ -582,8 +586,7 @@ transforms = [
   (lambda ctx,x,c: c/ctx.ln(x), 'exp($c/$y)', 0),
 ]
 
-def identify(ctx, x, constants=[], tol=None, maxcoeff=1000, full=False,
-    verbose=False):
+def identify(x, constants=[], full=False, **kwargs):
     r"""
     Given a real number `x`, ``identify(x)`` attempts to find an exact
     formula for `x`. This formula is returned as a string. If no match
@@ -796,7 +799,7 @@ def identify(ctx, x, constants=[], tol=None, maxcoeff=1000, full=False,
     """
 
     solutions = []
-
+    verbose = kwargs['verbose'] if 'verbose' in kwargs else False
     def addsolution(s):
         if verbose: print("Found: ", s)
         solutions.append(s)
@@ -808,7 +811,7 @@ def identify(ctx, x, constants=[], tol=None, maxcoeff=1000, full=False,
         if full: return ['0']
         else:    return '0'
     if x < 0:
-        sol = ctx.identify(-x, constants, tol, maxcoeff, full, verbose)
+        sol = identify(-x, constants, full, **kwargs)
         if sol is None:
             return sol
         if full:
@@ -816,11 +819,11 @@ def identify(ctx, x, constants=[], tol=None, maxcoeff=1000, full=False,
         else:
             return "-(%s)" % sol
 
-    if tol:
-        tol = ctx.mpf(tol)
+    if 'tol' in kwargs and kwargs['tol']:
+        kwargs['tol'] = ctx.mpf(kwargs['tol'])
     else:
-        tol = ctx.eps**0.7
-    M = maxcoeff
+        kwargs['tol'] = ctx.eps**0.7
+    M = kwargs['maxcoeff']
 
     if constants:
         if isinstance(constants, dict):
@@ -842,20 +845,20 @@ def identify(ctx, x, constants=[], tol=None, maxcoeff=1000, full=False,
                 continue
             t = ft(ctx,x,c)
             # Prevent exponential transforms from wreaking havoc
-            if abs(t) > M**2 or abs(t) < tol:
+            if abs(t) > M**2 or abs(t) < kwargs['tol']:
                 continue
             # Linear combination of base constants
-            r = ctx.pslq([t] + [a[0] for a in constants], tol, M)
+            r = pslq([t] + [a[0] for a in constants], **kwargs)
             s = None
             if r is not None and max(abs(uw) for uw in r) <= M and r[0]:
                 s = pslqstring(r, constants)
             # Quadratic algebraic numbers
             else:
-                q = ctx.pslq([ctx.one, t, t**2], tol, M)
+                q = pslq([ctx.one, t, t**2], **kwargs)
                 if q is not None and len(q) == 3 and q[2]:
                     aa, bb, cc = q
                     if max(abs(aa),abs(bb),abs(cc)) <= M:
-                        s = quadraticstring(ctx,t,aa,bb,cc)
+                        s = quadraticstring(t,aa,bb,cc)
             if s:
                 if cn == '1' and ('/$c' in ftn):
                     s = ftn.replace('$y', s).replace('/$c', '')
@@ -874,10 +877,10 @@ def identify(ctx, x, constants=[], tol=None, maxcoeff=1000, full=False,
         # Watch out for existing fractional powers of fractions
         logs = []
         for a, s in constants:
-            if not sum(bool(ctx.findpoly(ctx.ln(a)/ctx.ln(i),1)) for i in ilogs):
+            if not sum(bool(findpoly(ctx.ln(a)/ctx.ln(i),1)) for i in ilogs):
                 logs.append((ctx.ln(a), s))
         logs = [(ctx.ln(i),str(i)) for i in ilogs] + logs
-        r = ctx.pslq([ctx.ln(x)] + [a[0] for a in logs], tol, M)
+        r = pslq([ctx.ln(x)] + [a[0] for a in logs], **kwargs)
         if r is not None and max(abs(uw) for uw in r) <= M and r[0]:
             addsolution(prodstring(r, logs))
             if not full: return solutions[0]
@@ -890,8 +893,3 @@ def identify(ctx, x, constants=[], tol=None, maxcoeff=1000, full=False,
 IdentificationMethods.pslq = pslq
 IdentificationMethods.findpoly = findpoly
 IdentificationMethods.identify = identify
-
-
-if __name__ == '__main__':
-    import doctest
-    doctest.testmod()

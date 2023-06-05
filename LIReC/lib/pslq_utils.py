@@ -800,6 +800,7 @@ def identify(x, constants=[], full=False, **kwargs):
 
     solutions = []
     verbose = kwargs['verbose'] if 'verbose' in kwargs else False
+    full = kwargs['full'] if 'full' in kwargs else False
     def addsolution(s):
         if verbose: print("Found: ", s)
         solutions.append(s)
@@ -823,7 +824,7 @@ def identify(x, constants=[], full=False, **kwargs):
         kwargs['tol'] = ctx.mpf(kwargs['tol'])
     else:
         kwargs['tol'] = ctx.eps**0.7
-    M = kwargs['maxcoeff']
+    M = kwargs['maxcoeff'] if 'maxcoeff' in kwargs else 1000
 
     if constants:
         if isinstance(constants, dict):

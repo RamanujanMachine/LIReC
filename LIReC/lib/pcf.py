@@ -75,8 +75,8 @@ class PCF:
             b_factors = [factor_tuple[0] for factor_tuple in self.b.factor_list()[1]]
             for factor in a_factors:
                 if factor in b_factors and factor.compose(Poly(n-1)) in b_factors:
-                    self.a = Poly(cancel(self.a / factor))
-                    self.b = Poly(cancel(self.b / (factor * factor.compose(Poly(n - 1)))))
+                    self.a = Poly(cancel(self.a / factor), n) # n must stay in the constructor because these polynomials can end up being constant!
+                    self.b = Poly(cancel(self.b / (factor * factor.compose(Poly(n - 1)))), n)
                     deflated = True
     
     @staticmethod

@@ -1,8 +1,46 @@
-import mpmath as mp
 from collections import Counter
 from functools import reduce
-from itertools import chain, combinations_with_replacement, count
-from operator import mul
+from itertools import chain, combinations, combinations_with_replacement, count, takewhile
+from operator import mul, add
+from typing import List
+import mpmath as mp
+from sympy import Poly
+
+class PreciseConstant:
+    value: mp.mpf
+    precision: int
+    symbol: str
+    
+    def __init__(self, value, precision, symbol=None):
+        self.value = mp.mpf(str(value))
+        self.precision = precision
+        self.symbol = symbol
+
+class PolyPSLQRelation:
+    constants: List[PreciseConstant]
+    degree: int
+    order: int
+    coeffs: List[int]
+    
+    def __init__(self, consts, degree, order, coeffs):
+        self.constants = consts
+        self.degree = degree
+        self.order = order
+        self.coeffs = coeffs
+    
+    def __str__(self):
+        exponents = get_exponents(self.degree, self.order, len(self.constants))
+        monoms = [reduce(add, (f'*{self.constants[i].symbol or "c"+str(i)}**{exp[i]}' for i in range(len(self.constants))), f'{self.coeffs[j]}') for j, exp in enumerate(exponents)]
+        return str(Poly(reduce(add, ['+'+monom for monom in monoms], '')).expr) + f' = 0 ({self.precision})'
+    
+    @property
+    def precision(self):
+        return poly_eval(poly_get(self.constants, get_exponents(self.degree, self.order, len(self.constants))), self.coeffs, [c.precision for c in self.constants])
+
+
+def cond_print(verbose, m):
+    if verbose:
+        print(m)
 
 def get_exponents(degree, order, total_consts):
     if degree == None or order == None:
@@ -12,15 +50,15 @@ def get_exponents(degree, order, total_consts):
 
 def poly_get(consts, exponents):
     mp.mp.dps = min(c.precision for c in consts)
-    values = [mp.mpf(str(c.value)) for c in consts]
+    values = [c.value for c in consts]
     if 1 in values: # solely for backwards-compatibility. We don't need 1 in the DB!
         return None
     return [reduce(mul, (values[i] ** exp[i] for i in range(len(values))), mp.mpf(1)) for exp in exponents]
 
 def poly_eval(poly, coeffs, precisions):
-    mp.mp.dps = max(precisions) + 10
-    min_prec = min(precisions)
-    return min(mp.floor(-mp.log10(abs(mp.fdot(poly, coeffs)))), min_prec)
+    with mp.workdps(max(precisions) + 10):
+        min_prec = min(precisions)
+        return min(mp.floor(-mp.log10(abs(mp.fdot(poly, coeffs)))), min_prec)
 
 def poly_verify(consts, degree = None, order = None, relation = None, full_relation = None, exponents = None):
     if full_relation:
@@ -40,16 +78,88 @@ def poly_check(consts, degree = None, order = None, exponents = None):
     try:
         poly = poly_get(consts, exponents)
         if poly:
-            mp.mp.dps = 15 # intentionally low-resolution to quickly try something basic...
-            res = mp.pslq(poly)
+            with mp.workdps(15): # intentionally low-resolution to quickly try something basic...
+                res = pslq(poly)
             if res: # then calculating the substance in what we just found!
-                return res, poly_eval(poly, res, [c.base.precision for c in consts]), min_prec
+                return res, poly_eval(poly, res, [c.precision for c in consts])
     except ValueError:
         # one of the constants has too small precision, or one constant
         # is small enough that another constant is smaller than its precision.
         # eitherway there's no relation to be found here!
         pass 
-    return None, None, None
+    return None, None
+
+def compress_relation(result, consts, exponents, degree, order, verbose=False):
+    # will need to use later, so evaluating into lists
+    cond_print(verbose, f'Original relation is {result}')
+    
+    indices_per_var = [[i for i, e in enumerate(exponents) if e[j]] for j in range(len(consts))]
+    redundant_vars = [i for i, e in enumerate(indices_per_var) if not any(result[j] for j in e)]
+    redundant_coeffs = set()
+    for redundant_var in sorted(redundant_vars, reverse=True): # remove redundant variables
+        cond_print(verbose, f'Removing redundant variable #{redundant_var}')
+        redundant_coeffs |= set(indices_per_var[redundant_var])
+        del consts[redundant_var]
+    
+    # remove redundant degrees and orders
+    indices_per_degree = [[i for i, e in enumerate(exponents) if sum(e.values()) == j] for j in range(degree + 1)]
+    redundant_degrees = [i for i, e in enumerate(indices_per_degree) if not any(result[j] for j in e)]
+    redundant_degrees = list(takewhile(lambda x: sum(x) == degree, enumerate(sorted(redundant_degrees, reverse=True))))
+    if redundant_degrees:
+        degree = redundant_degrees[-1][1] - 1
+    redundant_coeffs.update(*indices_per_degree[degree+1:])
+    
+    indices_per_order = [[i for i, e in enumerate(exponents) if max(e.values(), default=0) == j] for j in range(order+1)]
+    redundant_orders = [i for i, e in enumerate(indices_per_order) if not any(result[j] for j in e)]
+    redundant_orders = list(takewhile(lambda x: sum(x) == order, enumerate(sorted(redundant_orders, reverse=True))))
+    if redundant_orders:
+        order = redundant_orders[-1][1] - 1
+    redundant_coeffs.update(*indices_per_order[order+1:])
+    
+    cond_print(verbose, f'True degree and order are {degree, order}')
+    for i in sorted(redundant_coeffs, reverse=True):
+        del result[i]
+    
+    cond_print(verbose, f'Compressed relation is {result}')
+
+    return result, consts, degree, order
+
+def relation_is_new(consts, degree, order, other_relations):
+    return not any(r for r in other_relations
+                   if {c.const_id for c in r.constants} <= {c.const_id for c in consts} and r.details[0] <= degree and r.details[1] <= order)
+
+MIN_PRECISION_RATIO = 0.8
+MAX_PREC = 9999
+def check_consts(consts: List[PreciseConstant], exponents=None, degree=2, order=1, verbose=False):
+    if not exponents:
+        exponents = get_exponents(degree, order, len(consts))
+    mp.mp.dps = min(c.precision for c in consts)
+    result, true_prec = poly_check(consts, exponents = exponents)
+    if not result:
+        return []
+    if verbose:
+        with mp.workdps(5):
+            r = str(true_prec / mp.mp.dps)
+        print(f'Found relation with precision ratio {r}')
+    if true_prec / mp.mp.dps < MIN_PRECISION_RATIO:
+        cond_print(verbose, f'Too low! Ignoring...')
+        return []
+    result, new_consts, new_degree, new_order = compress_relation(result, consts, exponents, degree, order)
+    # now must check subrelations! PSLQ is only guaranteed to return a small norm,
+    # but not guaranteed to return a 1-dimensional relation, see for example pslq([1,2,3])
+    subrelations = []
+    for i in range(1, len(consts)):
+        exponents = get_exponents(degree, order, i)
+        for subset in combinations(consts, i):
+            subresult, true_prec2 = poly_check(subset, exponents = exponents)
+            if subresult:
+                mp.mp.dps = min(c.precision for c in subset)
+                subresult, subconsts, subdegree, suborder = compress_relation(subresult, subset, exponents, degree, order)
+                if relation_is_new(subconsts, subdegree, suborder, subrelations) and true_prec2 / mp.mp.dps >= MIN_PRECISION_RATIO: # no need to check against new_relations + old_relations here btw
+                    true_prec2 = min(true_prec2, MAX_PREC)
+                    subrelations += [PolyPSLQRelation(subconsts, subdegree, suborder, subresult)]
+    true_prec = min(true_prec, MAX_PREC)
+    return subrelations if subrelations else [PolyPSLQRelation(new_consts, new_degree, new_order, result)]
 
 
 # ===== COPYPASTED FROM mpmath\identification.py WITH MODIFICATIONS =====
@@ -59,9 +169,8 @@ def poly_check(consts, degree = None, order = None, exponents = None):
 Implements the PSLQ algorithm for integer relation detection,
 and derivative algorithms for constant recognition.
 """
-
-from mp.libmp.backend import xrange
-from mp.libmp import int_types, sqrt_fixed
+from mpmath.libmp.backend import xrange
+from mpmath.libmp import int_types, sqrt_fixed
 
 # round to nearest integer (can be done more elegantly...)
 def round_fixed(x, prec):

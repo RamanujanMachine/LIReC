@@ -20,7 +20,7 @@ Configured as such:
     'Named': 'count' specifies how many named constants at a time.
 '''
 import mpmath as mp
-from itertools import combinations, takewhile, product
+from itertools import combinations, product
 from logging import getLogger
 from logging.config import fileConfig
 from os import getpid
@@ -31,10 +31,7 @@ from traceback import format_exc
 from LIReC.db import models, access
 from LIReC.lib.pslq_utils import *
 
-mp.mp.dps = 2000
-
 EXECUTE_NEEDS_ARGS = True
-DEBUG_PRINT_PRECISION_RATIOS = False
 DEBUG_PRINT_CONSTANTS = True
 
 ALGORITHM_NAME = 'POLYNOMIAL_PSLQ'
@@ -45,8 +42,6 @@ SUPPORTED_TYPES = ['Named', 'PcfCanonical']
 DEFAULT_CONST_COUNT = 1
 DEFAULT_DEGREE = 2
 DEFAULT_ORDER = 1
-MIN_PRECISION_RATIO = 0.8
-MAX_PREC = 9999
 
 FILTERS = [
         models.Constant.precision.isnot(None)
@@ -65,73 +60,6 @@ def get_filters(filters, const_type):
             filter_list += [func.cardinality(models.PcfCanonicalConstant.P) == func.cardinality(models.PcfCanonicalConstant.Q)]
 
     return filter_list 
-
-def compress_relation(result, consts, exponents, degree, order):
-    # will need to use later, so evaluating into lists
-    getLogger(LOGGER_NAME).debug(f'Original relation is {result}')
-    
-    indices_per_var = list(list(i for i, e in enumerate(exponents) if e[j]) for j in range(len(consts)))
-    redundant_vars = list(i for i, e in enumerate(indices_per_var) if not any(result[j] for j in e))
-    redundant_coeffs = set()
-    for redundant_var in sorted(redundant_vars, reverse=True): # remove redundant variables
-        getLogger(LOGGER_NAME).debug(f'Removing redundant variable #{redundant_var}')
-        redundant_coeffs |= set(indices_per_var[redundant_var])
-        del consts[redundant_var]
-    
-    # remove redundant degrees and orders
-    indices_per_degree = list(list(i for i, e in enumerate(exponents) if sum(e.values()) == j) for j in range(degree + 1))
-    redundant_degrees = list(i for i, e in enumerate(indices_per_degree) if not any(result[j] for j in e))
-    redundant_degrees = list(takewhile(lambda x: sum(x) == degree, enumerate(sorted(redundant_degrees, reverse=True))))
-    if redundant_degrees:
-        degree = redundant_degrees[-1][1] - 1
-    redundant_coeffs.update(*indices_per_degree[degree+1:])
-    
-    indices_per_order = list(list(i for i, e in enumerate(exponents) if max(e.values(), default=0) == j) for j in range(order+1))
-    redundant_orders = list(i for i, e in enumerate(indices_per_order) if not any(result[j] for j in e))
-    redundant_orders = list(takewhile(lambda x: sum(x) == order, enumerate(sorted(redundant_orders, reverse=True))))
-    if redundant_orders:
-        order = redundant_orders[-1][1] - 1
-    redundant_coeffs.update(*indices_per_order[order+1:])
-    
-    getLogger(LOGGER_NAME).debug(f'True degree and order are {degree, order}')
-    for i in sorted(redundant_coeffs, reverse=True):
-        del result[i]
-    
-    getLogger(LOGGER_NAME).debug(f'Compressed relation is {result}')
-
-    return result, consts, degree, order
-
-def relation_is_new(consts, degree, order, other_relations):
-    return not any(r for r in other_relations
-                   if {c.const_id for c in r.constants} <= {c.const_id for c in consts} and r.details[0] <= degree and r.details[1] <= order)
-
-def check_consts(consts, exponents, degree, order):
-    result, true_prec, min_prec = poly_check(consts, exponents = exponents)
-    if not result:
-        return []
-    if DEBUG_PRINT_PRECISION_RATIOS:
-        with mp.workdps(5):
-            r = str(true_prec / min_prec)
-        print(f'Found relation with precision ratio {r}')
-    if true_prec / min_prec < MIN_PRECISION_RATIO:
-        if DEBUG_PRINT_PRECISION_RATIOS:
-            print(f'Too low! Ignoring...')
-        return []
-    result, new_consts, new_degree, new_order = compress_relation(result, consts, exponents, degree, order)
-    # now must check subrelations! PSLQ is only guaranteed to return a small norm,
-    # but not guaranteed to return a 1-dimensional relation, see for example pslq([1,2,3])
-    subrelations = []
-    for i in range(1, len(consts)):
-        exponents = get_exponents(degree, order, i)
-        for subset in combinations(consts, i):
-            subresult, true_prec2, min_prec2 = poly_check(subset, exponents = exponents)
-            if subresult:
-                subresult, subconsts, subdegree, suborder = compress_relation(subresult, subset, exponents, degree, order)
-                if relation_is_new(subconsts, subdegree, suborder, subrelations) and true_prec2 / min_prec2 >= MIN_PRECISION_RATIO: # no need to check against new_relations + old_relations here btw
-                    true_prec2 = min(true_prec2, MAX_PREC)
-                    subrelations += [models.Relation(relation_type=ALGORITHM_NAME, details=[subdegree,suborder]+subresult, precision=int(true_prec2), constants=[c.base for c in subconsts])]
-    true_prec = min(true_prec, MAX_PREC)
-    return subrelations if subrelations else [models.Relation(relation_type=ALGORITHM_NAME, details=[new_degree,new_order]+result, precision=int(true_prec), constants=[c.base for c in new_consts])]
 
 def get_const_class(const_type):
     name = const_type + 'Constant'

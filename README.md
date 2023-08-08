@@ -43,5 +43,5 @@ db = LIReC_DB()
 import mpmath as mp
 mp.mp.dps=400
 results = db.identify([(100-mp.zeta(3))/(23+5*mp.zeta(3))], ['Zeta3'])
-print(str(x) for x in results)
+print([str(x) for x in results])
 ```

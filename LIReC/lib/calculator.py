@@ -87,7 +87,7 @@ class Universal:
         if isinstance(name, str):
             named_const.name = const
             named_const.description = const_func.__doc__[:const_func.__doc__.index('.\n')].lstrip()
-        if force or named_const.value:
+        if force or named_const.base.value:
             return named_const
     
     @staticmethod
@@ -911,7 +911,7 @@ class Constants:
     @staticmethod
     def alpha() -> mpf:
         '''
-        second feigenbaum contsant, important to bifurcation theory.
+        second feigenbaum constant, important to bifurcation theory.
         OEIS link: https://oeis.org/A006891
         WARNING: This is not a calculation!
         ''' # TODO how the hell is this calculated? maybe https://github.com/brorson/FeigenbaumConstants
@@ -1040,6 +1040,25 @@ class Constants:
         WARNING: This is not a calculation!
         ''' # TODO need primes again...
         return mp.mpf('0.67823449191739197803')
+    
+    @staticmethod
+    def alpha_GW() -> mpf:
+        '''
+        goemans williamson constant, related to the max cut problem.
+        OEIS link: https://oeis.org/A203914
+        '''
+        # uses generic extreme point algorithm, replace f with whatever you need
+        f = lambda x: x / (mp.sin(x/2) ** 2)
+        return f(mp.findroot(lambda x : mp.diff(f,x), 2.3))
+    
+    @staticmethod
+    def alpha_M() -> mpf:
+        '''
+        madelung constant (negated), the electrostatic energy of salt crystals.
+        OEIS link: https://oeis.org/A085469
+        WARNING: Very inefficient to calculate! Handle with care!
+        '''
+        return -6 * mp.log(2) + 8 * mp.nsum(lambda n,m: (-1)**(n+m) / mp.sqrt(n**2+m**2), [1, mp.inf], [1, mp.inf], method='a') + mp.nsum(lambda n,m,p: (-1)**(n+m+p) / mp.sqrt(n**2+m**2+p**2), [1, mp.inf], [1, mp.inf], [1, mp.inf], method='a')
 
 '''
 List of rejected constants:

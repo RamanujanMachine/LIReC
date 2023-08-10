@@ -24,13 +24,12 @@ pcf.b.all_coeffs() # Same for b_n
 
 ### Numeric Identification
 ```python
-from LIReC.db.access import LIReC_DB
-db = LIReC_DB()
+from LIReC.db.access import db
 db.identify(...)
 ```
-The `LIReC_DB.identify` function allows one to check one (or more) numeric values against the known "famous" constants in the database for the existence of polynomial relations. The inputs are:
+The `db.identify` function allows one to check one (or more) numeric values against the known "famous" constants in the database for the existence of polynomial relations. The inputs are:
 1. `values`: List of numbers. It is not recommended to use python's native `float` type as it cannot reach high precision. Instead, use `str` (or `decimal.Decimal` or `mpmath.mpf`) for better results.
-2. `names`: List of names of famous constants that one or more of the values in `values` are suspected to be related to. For a full list of possible names try `LIReC_DB.names`.
+2. `names`: List of names of famous constants that one or more of the values in `values` are suspected to be related to. For a full list of possible names try `db.names`. Also try `db.names_with_descriptions` for a full list of names along with a short description of each name, or `db.describe` to conveniently fish out the description of any one name in the database (if it exists).
 3. `degree`: The degree of the relation. Each relation is defined as the coefficients of a multivariate polynomial, where each monomial (in multi-index notation) is of the form a_alpha \* x \*\* alpha. Then, the degree is the maximal allowed L1 norm on alpha. Defaults to 2.
 4. `order`: The order of the relation, which is the maximal allowed L-infinity norm on each alpha (see degree). Defaults to 1.
 5. `min_prec`: The minimal digital precision expected of the numbers in `values`. Can be omitted, in which case it will be inferred from `values`.
@@ -38,10 +37,13 @@ The `LIReC_DB.identify` function allows one to check one (or more) numeric value
 
 The result of calling `identify` is a list of `pslq_util.PolyPSLQRelation` objects. These can be casted into a string that represents the relation and its estimated precision. For instance, try this code snippet:
 ```python
-from LIReC.db.access import LIReC_DB
-db = LIReC_DB()
+from LIReC.db.access import db
 import mpmath as mp
 mp.mp.dps=400
-results = db.identify([(100-mp.zeta(3))/(23+5*mp.zeta(3))], ['Zeta3'])
+results = db.identify([(100-mp.zeta(3))/(23+5*mp.zeta(3))], ['Zeta3']) # first run should take a few seconds to query the db...
+print([str(x) for x in results])
+results = db.identify([mp.mpf(1)/3 - mp.zeta(3)], ['Zeta3']) # this works
+print([str(x) for x in results])
+results = db.identify([1/3 - mp.zeta(3)], ['Zeta3']) # this doesn't! don't let bad floats pollute your numbers!
 print([str(x) for x in results])
 ```

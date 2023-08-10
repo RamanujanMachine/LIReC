@@ -11,20 +11,48 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import sessionmaker
 from psycopg2.errors import UniqueViolation
 from typing import Tuple, List, Dict, Generator
-from LIReC.db.config import get_connection_string, auto_pcf_config
 from LIReC.db import models
 from LIReC.lib.calculator import Universal
 from LIReC.lib.pcf import *
 from LIReC.lib.pslq_utils import *
 
+class DBConnection:
+    host: str
+    port: int
+    user: str
+    passwd: str
+    db_name: str
+    
+    def __init__(self):
+        self.host = 'database-1.c1keieal025m.us-east-2.rds.amazonaws.com'
+        self.port = 5432
+        self.user = 'spectator_public'
+        self.passwd = 'helloworld123'
+        self.db_name = 'lirec-main'
+    
+    def __str__(self):
+        return f'postgresql://{self.user}:{self.passwd}@{self.host}:{self.port}/{self.db_name}'
+
 class LIReC_DB:
     def __init__(self):
-        logging.debug("Trying to connect to database")
-        self._engine = create_engine(get_connection_string(), echo=False)
-        Session = sessionmaker(bind=self._engine)
-        self.session = Session() # TODO can be unit-tested with mock-alchemy or alchemy-mock...
-        logging.debug("Connected to database")
+        self.session = None
+        self.auto_pcf = {
+            'depth': 10000,
+            'precision': 50,
+            'force_fr': True,
+            'timeout_sec': 60,
+            'timeout_check_freq': 1000,
+            'no_exception': False
+        }
+        self.reconnect()
 
+    def reconnect(self):
+        if self.session:
+            self.session.rollback()
+            self.session.close()
+        # TODO can be unit-tested with mock-alchemy or alchemy-mock...
+        self.session = sessionmaker(bind=create_engine(str(connection), echo=False))()
+        
     @property
     def constants(self):
         return self.session.query(models.NamedConstant).order_by(models.NamedConstant.const_id)
@@ -34,8 +62,16 @@ class LIReC_DB:
         return sorted(c.name for c in self.constants)
 
     @property
+    def names_with_descriptions(self):
+        return [(c.name, c.description) for c in self.constants]
+
+    @property
     def cfs(self):
         return self.session.query(models.PcfCanonicalConstant).order_by(models.PcfCanonicalConstant.const_id)
+
+    def describe(self, name):
+        match = [d for c,d in self.names_with_descriptions if c==name]
+        return match[0] if match else None
 
     def add_pcf_canonical(self, pcf: PCF, calculation: PCFCalc or None = None) -> models.PcfCanonicalConstant:
         # TODO implement add_pcf_canonicals that uploads multiple at a time
@@ -72,7 +108,7 @@ class LIReC_DB:
             raise PCFCalc.IllegalPCFException('Irrational or Complex roots in partial numerator are not allowed.')
         #calculation = LIReC_DB.calc_pcf(pcf, depth) if depth else None
         # By default the coefs are sympy.core.numbers.Integer but sql need them to be integers
-        return self.add_pcf_canonical(pcf, PCFCalc(pcf).run(**auto_pcf_config))
+        return self.add_pcf_canonical(pcf, PCFCalc(pcf).run(**self.auto_pcf))
     
     def add_pcfs(self, pcfs: Generator[PCF, None, None]) -> Tuple[List[models.PcfCanonicalConstant], Dict[str, List[PCF]]]:
         """
@@ -160,3 +196,6 @@ class LIReC_DB:
         values += [PreciseConstant(c.base.value, c.base.precision, c.name) for c in filtered]
         min_prec = min(min_prec, min(c.base.precision for c in filtered if c.base.precision >= 15))
         return check_consts(values, degree=degree, order=order)
+
+connection = DBConnection()
+db = LIReC_DB()

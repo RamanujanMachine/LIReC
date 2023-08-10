@@ -7,8 +7,8 @@ pip install git+https://github.com/RamanujanMachine/LIReC.git
 
 ### Access pcfs
 ```python
-from LIReC.db.access import LIReC_DB
-pcfs = LIReC_DB().get_actual_pcfs()
+from LIReC.db.access import db
+pcfs = db.get_actual_pcfs()
 ```
 Each pcf is of PCF class which is defined in lib\pcf.py
 

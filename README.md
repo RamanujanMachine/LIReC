@@ -33,7 +33,8 @@ The `db.identify` function allows one to check one (or more) numeric values agai
 3. `degree`: The degree of the relation. Each relation is defined as the coefficients of a multivariate polynomial, where each monomial (in multi-index notation) is of the form a_alpha \* x \*\* alpha. Then, the degree is the maximal allowed L1 norm on alpha. Defaults to 2.
 4. `order`: The order of the relation, which is the maximal allowed L-infinity norm on each alpha (see degree). Defaults to 1.
 5. `min_prec`: The minimal digital precision expected of the numbers in `values`. Can be omitted, in which case it will be inferred from `values`.
-6. `verbose`: If set to `True`, will print various messages regarding the input/output and progress. Defaults to `False`.
+6. `isolate`: If set to `True`, will take the first recognized constant from `names` and isolate it as a function of all other constants in the relations it participates in. Defaults to `False`.
+7. `verbose`: If set to `True`, will print various messages regarding the input/output and progress. Defaults to `False`.
 
 The result of calling `identify` is a list of `pslq_util.PolyPSLQRelation` objects. These can be casted into a string that represents the relation and its estimated precision. For instance, try this code snippet:
 ```python

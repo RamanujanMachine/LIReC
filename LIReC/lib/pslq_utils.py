@@ -4,7 +4,7 @@ from itertools import chain, combinations, combinations_with_replacement, count,
 from operator import mul, add
 from typing import List
 import mpmath as mp
-from sympy import Poly
+from sympy import sympify
 
 class PreciseConstant:
     value: mp.mpf
@@ -21,18 +21,35 @@ class PolyPSLQRelation:
     degree: int
     order: int
     coeffs: List[int]
+    isolate: int or str or None # or Symbol
     
-    def __init__(self, consts, degree, order, coeffs):
+    def __fix_isolate(self):
+        # need isolate as a str eventually
+        if isinstance(self.isolate, int):
+            self.isolate = (self.constants[self.isolate].symbol or f'c{self.isolate}') if self.isolate < len(self.constants) else None
+        self.isolate = sympify(self.isolate) # will become a Symbol (or stay None if is None)
+    
+    def __init__(self, consts, degree, order, coeffs, isolate=None):
         self.constants = consts
         self.degree = degree
         self.order = order
         self.coeffs = coeffs
+        self.isolate = isolate
     
     def __str__(self):
         exponents = get_exponents(self.degree, self.order, len(self.constants))
         monoms = [reduce(add, (f'*{self.constants[i].symbol or "c"+str(i)}**{exp[i]}' for i in range(len(self.constants))), f'{self.coeffs[j]}') for j, exp in enumerate(exponents)]
-        return str(Poly(reduce(add, ['+'+monom for monom in monoms], '')).expr) + f' = 0 ({self.precision})'
-    
+        expr = sympify(reduce(add, ['+'+monom for monom in monoms], ''))
+        
+        self.__fix_isolate()
+        if self.isolate not in expr.free_symbols or not expr.is_Add: # checking is_Add just in case...
+            return str(expr.expr) + f' = 0 ({self.precision})'
+        # expect expr to be Add of Muls or Pows, so args will give the terms
+        # so now the relation is (-num) + (denom) * isolate = 0, or isolate = num/denom!
+        num = reduce(add, [-t for t in expr.args if self.isolate not in t.free_symbols], 0)
+        denom = reduce(add, [t/self.isolate for t in expr.args if self.isolate in t.free_symbols], 0)
+        return f'{self.isolate} = {num/denom} ({self.precision})' # this will not be perfect if isolate appears with an exponent! will also be weird if either num or denom is 0
+
     @property
     def precision(self):
         return poly_eval(poly_get(self.constants, get_exponents(self.degree, self.order, len(self.constants))), self.coeffs, [c.precision for c in self.constants])

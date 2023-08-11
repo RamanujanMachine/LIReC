@@ -160,7 +160,7 @@ class LIReC_DB:
     def get_original_pcfs(self) -> List[PCF]:
         return [PCF(cf.original_a, cf.original_b) for cf in self.cfs if cf.original_a and cf.original_b]
 
-    def identify(self, values, names=None, degree=2, order=1, min_prec=None, max_prec=None, verbose=False):
+    def identify(self, values, names=None, degree=2, order=1, min_prec=None, max_prec=None, isolate=False, verbose=False):
         if not min_prec:
             min_prec = min(v.precision if isinstance(v, PreciseConstant) else len(str(v).replace('.','').rstrip('0')) for v in values)
             cond_print(verbose, f'Notice: No minimal precision given, assuming {min_prec} accurate decimal digits')
@@ -171,6 +171,15 @@ class LIReC_DB:
         
         cond_print(any(isinstance(v, float) for v in values) and verbose, "Warning: Python's default float type suffers from rounding errors and limited precision! Try inputting values as string or mpmath.mpf (or pslq_utils.PreciseConstant) for better results.")
         values = [v if isinstance(v, PreciseConstant) else PreciseConstant(v, min_prec) for v in values]
+        
+        if isolate:
+            if not names:
+                cond_print(verbose, "Warning: names list is empty! Don't know what to isolate for!")
+                isolate = False
+            elif len(names) > 1:
+                cond_print(verbose, f'Notice: names list has more than one constant! Will isolate for {names[0]}.')
+            if order > 1:
+                cond_print(verbose, f'Notice: isolating when order > 1 can give weird results.')
         
         res = check_consts(values, degree=degree, order=order)
         if res:
@@ -195,7 +204,11 @@ class LIReC_DB:
         
         values += [PreciseConstant(c.base.value, c.base.precision, c.name) for c in filtered]
         min_prec = min(min_prec, min(c.base.precision for c in filtered if c.base.precision >= 15))
-        return check_consts(values, degree=degree, order=order)
+        res = check_consts(values, degree=degree, order=order)
+        if isolate and names:
+            for r in res:
+                r.isolate = filtered[0].name
+        return res
 
 connection = DBConnection()
 db = LIReC_DB()

@@ -165,12 +165,11 @@ class LIReC_DB:
             min_prec = min(v.precision if isinstance(v, PreciseConstant) else len(str(v).replace('.','').rstrip('0')) for v in values)
             cond_print(verbose, f'Notice: No minimal precision given, assuming {min_prec} accurate decimal digits')
         if min_prec < 15: # too low for PSLQ to work!
-            cond_print(verbose, 'Error: Precision too low! Must be at least 15')
-            return None
+            cond_print(verbose, 'Notice: Precision too low. Switching to manual tolerance mode. Might get too many results.')
         max_prec = max_prec if max_prec else min_prec * 2
         
         cond_print(any(isinstance(v, float) for v in values) and verbose, "Warning: Python's default float type suffers from rounding errors and limited precision! Try inputting values as string or mpmath.mpf (or pslq_utils.PreciseConstant) for better results.")
-        values = [v if isinstance(v, PreciseConstant) else PreciseConstant(v, min_prec) for v in values]
+        values = [v if isinstance(v, PreciseConstant) else PreciseConstant(v, len(str(v).replace('.','').rstrip('0')), f'c{i}') for i,v in enumerate(values)]
         
         if isolate:
             if not names:
@@ -181,11 +180,13 @@ class LIReC_DB:
             if order > 1:
                 cond_print(verbose, f'Notice: isolating when order > 1 can give weird results.')
         
+        # step 1 - try to PSLQ the values alone
         res = check_consts(values, degree=degree, order=order)
         if res:
             cond_print(verbose, 'Found relation(s) between the given values without using the hint(s)!')
             return res
         
+        # step 2 - add named constants to the mix
         cond_print(verbose, 'Querying database...')
         extras = self.session.query(models.NamedConstant).join(models.Constant).filter(models.Constant.value != None).all()
         cond_print(verbose, 'Query done. Finding relations...')

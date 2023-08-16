@@ -3,13 +3,13 @@ import logging
 from collections import namedtuple
 from decimal import Decimal, getcontext
 from functools import reduce
-from sympy import Poly
-from sympy.core.numbers import Integer, Rational
+from sympy import sympify
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import sessionmaker
 from psycopg2.errors import UniqueViolation
+from time import time
 from typing import Tuple, List, Dict, Generator
 from LIReC.db import models
 from LIReC.lib.calculator import Universal
@@ -44,8 +44,16 @@ class LIReC_DB:
             'timeout_check_freq': 1000,
             'no_exception': False
         }
+        self.use_cache = False# True
+        self.auto_recache_delay_sec = 60*60*24 # one day
         self.reconnect()
-
+    
+    def _get_all(self, table):
+        if table == models.NamedConstant:
+            if not self.use_cache:
+                return self.session.query(table).all()
+            # else...
+    
     def reconnect(self):
         if self.session:
             self.session.rollback()
@@ -100,11 +108,11 @@ class LIReC_DB:
         raises NoFRException if calculate is True and the pcf doesn't converge
         raises IllegalPCFException if the pcf has natural roots or if its b_n has irrational roots.
         """
-        if any(r for r in pcf.a.real_roots() if isinstance(r, Integer) and r > 0):
+        if any(r for r in pcf.a.real_roots() if r.is_integer and r > 0):
             raise PCFCalc.IllegalPCFException('Natural root in partial denominator ensures divergence.')
-        if any(r for r in pcf.b.real_roots() if isinstance(r, Integer) and r > 0):
+        if any(r for r in pcf.b.real_roots() if r.is_integer and r > 0):
             raise PCFCalc.IllegalPCFException('Natural root in partial numerator ensures trivial convergence to a rational number.')
-        if any(r for r in pcf.b.all_roots() if not isinstance(r, Rational)):
+        if any(r for r in pcf.b.all_roots() if not r.is_rational):
             raise PCFCalc.IllegalPCFException('Irrational or Complex roots in partial numerator are not allowed.')
         #calculation = LIReC_DB.calc_pcf(pcf, depth) if depth else None
         # By default the coefs are sympy.core.numbers.Integer but sql need them to be integers
@@ -160,55 +168,69 @@ class LIReC_DB:
     def get_original_pcfs(self) -> List[PCF]:
         return [PCF(cf.original_a, cf.original_b) for cf in self.cfs if cf.original_a and cf.original_b]
 
-    def identify(self, values, names=None, degree=2, order=1, min_prec=None, max_prec=None, isolate=False, verbose=False):
+    def identify(self, values, degree=2, order=1, min_prec=None, max_prec=None, isolate=False, wide_search=False, verbose=False):
+        if not values:
+            return []
+        numbers, named = [], []
+        for i,v in enumerate(values): # first iteration: detect expressions
+            if isinstance(v, PreciseConstant):
+                numbers += [v]
+            else:
+                as_expr = sympify(str(v))
+                if as_expr.free_symbols:
+                    named += [as_expr]
+                else:
+                    if isinstance(v, float):
+                        cond_print(verbose, "Warning: Python's default float type suffers from rounding errors and limited precision! Try inputting values as string or mpmath.mpf (or pslq_utils.PreciseConstant) for better results.")
+                    try:
+                        numbers += [PreciseConstant(v, len(str(v).replace('.','').rstrip('0')), f'c{i}')]
+                    except: # no free symbols but cannot turn into mpf means it involves only sympy constants. need min_prec later
+                        named += [as_expr]
+        
         if not min_prec:
-            min_prec = min(v.precision if isinstance(v, PreciseConstant) else len(str(v).replace('.','').rstrip('0')) for v in values)
+            min_prec = min([MIN_PSLQ_DPS] + [v.precision for v in numbers])
             cond_print(verbose, f'Notice: No minimal precision given, assuming {min_prec} accurate decimal digits')
-        if min_prec < 15: # too low for PSLQ to work!
+        if min_prec < MIN_PSLQ_DPS: # too low for PSLQ to work in the usual way!
             cond_print(verbose, 'Notice: Precision too low. Switching to manual tolerance mode. Might get too many results.')
         max_prec = max_prec if max_prec else min_prec * 2
         
-        cond_print(any(isinstance(v, float) for v in values) and verbose, "Warning: Python's default float type suffers from rounding errors and limited precision! Try inputting values as string or mpmath.mpf (or pslq_utils.PreciseConstant) for better results.")
-        values = [v if isinstance(v, PreciseConstant) else PreciseConstant(v, len(str(v).replace('.','').rstrip('0')), f'c{i}') for i,v in enumerate(values)]
-        
         if isolate:
-            if not names:
-                cond_print(verbose, "Warning: names list is empty! Don't know what to isolate for!")
+            if not named:
+                cond_print(verbose, "Warning: no named constants given! Don't know what to isolate for!")
                 isolate = False
-            elif len(names) > 1:
-                cond_print(verbose, f'Notice: names list has more than one constant! Will isolate for {names[0]}.')
+            elif len(named) > 1:
+                cond_print(verbose, f'Notice: More than one named constant (or expression involving named constants) was given! Will isolate for {named[0]}.')
             if order > 1:
                 cond_print(verbose, f'Notice: isolating when order > 1 can give weird results.')
         
-        # step 1 - try to PSLQ the values alone
-        res = check_consts(values, degree=degree, order=order)
+        # step 1 - try to PSLQ the numbers alone
+        res = check_consts(numbers, degree=degree, order=order)
         if res:
-            cond_print(verbose, 'Found relation(s) between the given values without using the hint(s)!')
+            cond_print(verbose, 'Found relation(s) between the given numbers without using the named constants!')
             return res
+        
+        if not named and not wide_search:
+            cond_print(verbose, 'No named constants were given, and the given numbers have no relation. Run with wide_search=True to search with all named constants.')
+            return []
         
         # step 2 - add named constants to the mix
         cond_print(verbose, 'Querying database...')
-        extras = self.session.query(models.NamedConstant).join(models.Constant).filter(models.Constant.value != None).all()
+        names = [c for c in self._get_all(models.NamedConstant) if c.base.value and c.base.precision >= MIN_PSLQ_DPS]
+        if named:
+            for expr in named:
+                value = expr.subs({c.name:c.base.value for c in names}).evalf(max(min_prec, MIN_PSLQ_DPS)) # sympy can ignore unnecessary variables
+                precision = min(c.base.precision for c in names if c in expr.free_symbols) if expr.free_symbols else len(str(expr).replace('.','').rstrip('0'))
+                numbers += [PreciseConstant(value, precision, f'({expr})')]
+        else:
+            cond_print(verbose, 'Warning: Currently the wide search is not very efficient. This may take a while...')
+            named = [PreciseConstant(c.base.value, c.base.precision, c.name) for c in names]
         cond_print(verbose, 'Query done. Finding relations...')
-        filtered = extras
-        if names:
-            filtered = [c for c in extras if c.name in names]
-        else: # TODO
-            cond_print(verbose, 'Warning: Currently the code is not very efficient when not given a names array as a hint. This may take a while ...')
         
-        if verbose:
-            for name in names:
-                if name not in [c.name for c in extras]:
-                    print(f'Warning: Named constant {name} not found! Will be ignored.')
-        if not filtered:
-            filtered = extras
-        
-        values += [PreciseConstant(c.base.value, c.base.precision, c.name) for c in filtered]
-        min_prec = min(min_prec, min(c.base.precision for c in filtered if c.base.precision >= 15))
-        res = check_consts(values, degree=degree, order=order)
-        if isolate and names:
+        min_prec = min(v.precision for v in numbers)
+        res = check_consts(numbers, degree=degree, order=order)
+        if isolate and named:
             for r in res:
-                r.isolate = filtered[0].name
+                r.isolate = f'({named[0]})'
         return res
 
 connection = DBConnection()

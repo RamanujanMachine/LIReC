@@ -43,7 +43,7 @@ class PolyPSLQRelation:
         
         self.__fix_isolate()
         if self.isolate not in expr.free_symbols or not expr.is_Add: # checking is_Add just in case...
-            return str(expr) + f' = 0 ({self.precision})'
+            return f'{expr} = 0 ({self.precision})'
         # expect expr to be Add of Muls or Pows, so args will give the terms
         # so now the relation is (-num) + (denom) * isolate = 0, or isolate = num/denom!
         num = reduce(add, [-t for t in expr.args if self.isolate not in t.free_symbols], 0)

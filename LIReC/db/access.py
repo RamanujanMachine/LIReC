@@ -218,8 +218,9 @@ class LIReC_DB:
         names = [c for c in self._get_all(models.NamedConstant) if c.base.value and c.base.precision >= MIN_PSLQ_DPS]
         if named:
             for expr in named:
-                value = expr.subs({c.name:c.base.value for c in names}).evalf(max(min_prec, MIN_PSLQ_DPS)) # sympy can ignore unnecessary variables
-                precision = min(c.base.precision for c in names if c in expr.free_symbols) if expr.free_symbols else len(str(expr).replace('.','').rstrip('0'))
+                precision = min(c.base.precision for c in names if sympify(c.name) in expr.free_symbols) if expr.free_symbols else len(str(expr).replace('.','').rstrip('0'))
+                mp.mp.dps = max(precision, MIN_PSLQ_DPS)
+                value = expr.subs({c.name:mp.mpf(str(c.base.value)) for c in names}).evalf(mp.mp.dps) # sympy can ignore unnecessary variables
                 numbers += [PreciseConstant(value, precision, f'({expr})')]
         else:
             cond_print(verbose, 'Warning: Currently the wide search is not very efficient. This may take a while...')

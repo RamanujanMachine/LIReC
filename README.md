@@ -30,7 +30,8 @@ db.identify(...)
 The `db.identify` function allows one to check one (or more) numeric values against the known "famous" constants in the database for the existence of polynomial relations. The inputs are:
 1. `values`: List that contains any combination of the following:
    - Numeric values. It is not recommended to use python's native `float` type as it cannot reach high precision. Instead, use `str` (or `decimal.Decimal` or `mpmath.mpf`) for better results.
-   - Strings that represent famous constants, or `sympy` expressions that involve one or more such names. For a full list of possible names try `db.names`. Also try `db.names_with_descriptions` for a full list of names along with a short description of each name, or `db.describe` to conveniently fish out the description of any one name in the database (if it exists).
+   - Strings that represent famous constants. For a full list of possible names try `db.names`. Also try `db.names_with_descriptions` for a full list of names along with a short description of each name, or `db.describe` to conveniently fish out the description of any one name in the database (if it exists).
+   - `Sympy` expressions that involve one or more famous constants. Can be inputted either in string form or as `sympy.Expr` form.
 3. `degree`: The degree of the relation. Each relation is defined as the coefficients of a multivariate polynomial, where each monomial (in multi-index notation) is of the form a_alpha \* x \*\* alpha. Then, the degree is the maximal allowed L1 norm on alpha. Defaults to 2.
 4. `order`: The order of the relation, which is the maximal allowed L-infinity norm on each alpha (see degree). Defaults to 1.
 5. `min_prec`: The minimal digital precision expected of the numbers in `values`. Can be omitted, in which case it will be inferred from `values`.

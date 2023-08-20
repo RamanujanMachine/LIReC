@@ -64,7 +64,7 @@ class LIReC_DB:
             self.cache = load(f)
     
     def _get_all(self, table):
-        if table == models.NamedConstant:
+        if table in self.cached_tables:
             if not self.use_cache:
                 return self.session.query(table).all()
             else:

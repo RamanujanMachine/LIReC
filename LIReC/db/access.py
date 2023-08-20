@@ -8,6 +8,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import sessionmaker
+import os
+from pathlib import Path
+from pickle import dump, load # better than json because it supports a lot more. not human readable but we don't care
 from psycopg2.errors import UniqueViolation
 from time import time
 from typing import Tuple, List, Dict, Generator
@@ -44,15 +47,32 @@ class LIReC_DB:
             'timeout_check_freq': 1000,
             'no_exception': False
         }
-        self.use_cache = False# True
-        self.auto_recache_delay_sec = 60*60*24 # one day
+        self.use_cache = True
+        self.cache_path = str(Path(os.getcwd()) / 'lirec.cache')
+        self.auto_recache_delay_sec = 60*60*24*7 # exactly one week
+        self.cache = None
+        self.cached_tables = [models.Constant, models.NamedConstant, models.PcfCanonicalConstant]
         self.reconnect()
+    
+    def _redownload(self):
+        self.cache = {str(table):self.session.query(table).all() for table in self.cached_tables}
+        with open(self.cache_path, 'wb') as f:
+            dump(self.cache, f)
+    
+    def _recache(self):
+        with open(self.cache_path, 'rb') as f:
+            self.cache = load(f)
     
     def _get_all(self, table):
         if table == models.NamedConstant:
             if not self.use_cache:
                 return self.session.query(table).all()
-            # else...
+            else:
+                if not os.path.exists(self.cache_path) or (self.auto_recache_delay_sec and time() - os.path.getmtime(self.cache_path) > self.auto_recache_delay_sec):
+                    self._redownload()
+                if not self.cache:
+                    self._recache()
+                return self.cache[str(table)]
     
     def reconnect(self):
         if self.session:
@@ -63,7 +83,7 @@ class LIReC_DB:
         
     @property
     def constants(self):
-        return self.session.query(models.NamedConstant).order_by(models.NamedConstant.const_id)
+        return self._get_all(models.NamedConstant)
 
     @property
     def names(self):
@@ -75,7 +95,7 @@ class LIReC_DB:
 
     @property
     def cfs(self):
-        return self.session.query(models.PcfCanonicalConstant).order_by(models.PcfCanonicalConstant.const_id)
+        return self._get_all(models.PcfCanonicalConstant)
 
     def describe(self, name):
         match = [d for c,d in self.names_with_descriptions if c==name]
@@ -157,7 +177,7 @@ class LIReC_DB:
         return [int(coef) for coef in cf.P], [int(coef) for coef in cf.Q]
     
     def get_canonical_forms(self) -> List[CanonicalForm]:
-        return [LIReC_DB.parse_cf_to_lists(pcf) for pcf in self.cfs.all()]
+        return [LIReC_DB.parse_cf_to_lists(pcf) for pcf in self.cfs]
     
     def get_actual_pcfs(self) -> List[PCF]:
         """

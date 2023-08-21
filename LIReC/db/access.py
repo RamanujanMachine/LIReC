@@ -64,14 +64,13 @@ class LIReC_DB:
             self.cache = load(f)
     
     def _get_all(self, table):
-        if not self.use_cache:
-            return self.session.query(table).all()
-        elif table in self.cached_tables:
+        if self.use_cache and table in self.cached_tables:
             if not os.path.exists(self.cache_path) or (self.auto_recache_delay_sec and time() - os.path.getmtime(self.cache_path) > self.auto_recache_delay_sec):
                 self._redownload()
             if not self.cache:
                 self._recache()
             return self.cache[str(table)]
+        return self.session.query(table).all()
     
     def reconnect(self):
         if self.session:

@@ -45,6 +45,12 @@ CREATE TABLE derived_constant (
 	args JSONB NOT NULL
 );
 
+CREATE TABLE power_of_constant (
+    const_id UUID NOT NULL PRIMARY KEY REFERENCES constant (const_id),
+    based_on UUID NOT NULL REFERENCES constant (const_id),
+	power INT NOT NULL
+);
+
 CREATE TABLE pcf_family (
     family_id UUID NOT NULL DEFAULT uuid_generate_v1() PRIMARY KEY,
 	a VARCHAR NOT NULL,
@@ -92,6 +98,7 @@ GRANT SELECT ON constant_in_relation TO spectator;
 GRANT SELECT, REFERENCES ON named_constant TO spectator;
 GRANT SELECT, REFERENCES ON pcf_canonical_constant TO spectator;
 GRANT SELECT, REFERENCES ON derived_constant TO spectator;
+GRANT SELECT, REFERENCES ON power_of_constant TO spectator;
 GRANT SELECT ON pcf_family TO spectator;
 GRANT SELECT ON relation TO spectator;
 GRANT SELECT ON scan_history TO spectator;
@@ -122,6 +129,7 @@ CREATE ROLE scout WITH
 GRANT spectator TO scout;
 GRANT INSERT ON constant_in_relation TO scout;
 GRANT INSERT ON relation TO scout;
+GRANT INSERT ON power_of_constant TO scout;
 
 
 DROP ROLE IF EXISTS pioneer;
@@ -155,6 +163,7 @@ GRANT UPDATE ON pcf_canonical_constant TO janitor;
 GRANT UPDATE ON derived_constant TO janitor;
 GRANT UPDATE, DELETE ON relation TO janitor;
 GRANT UPDATE, DELETE ON constant_in_relation TO janitor;
+GRANT UPDATE, DELETE ON power_of_constant TO janitor;
 
 
 DROP ROLE IF EXISTS twitterbot;

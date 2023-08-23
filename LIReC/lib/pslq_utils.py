@@ -62,8 +62,8 @@ def cond_print(verbose, m):
 def get_exponents(degree, order, total_consts):
     if degree == None or order == None:
         raise Exception('degree and order cannot be None')
-    return list(c for c in map(Counter, chain.from_iterable(combinations_with_replacement(range(total_consts), i) for i in range(degree + 1)))
-                if not any(i for i in c.values() if i > order))
+    return [c for c in map(Counter, chain.from_iterable(combinations_with_replacement(range(total_consts), i) for i in range(degree + 1)))
+            if not any(i for i in c.values() if i > order)]
 
 MIN_PSLQ_DPS = 15
 
@@ -85,13 +85,11 @@ def poly_verify(consts, degree = None, order = None, relation = None, full_relat
     if not exponents:
         exponents = get_exponents(degree, order)
     poly = poly_get(consts, get_exponents(degree, order, len(consts)))
-    if not poly:
-        return None
-    return poly_eval(poly, relation, [c.base.precision for c in consts])
+    return poly_eval(poly, relation, [c.base.precision for c in consts]) if poly else None
 
-def poly_check(consts, degree = None, order = None, exponents = None):
+def poly_check(consts, degree = None, order = None, exponents = None, test_prec = 15, min_roi = 2):
     if not exponents:
-        exponents = get_exponents(degree, order)
+        exponents = get_exponents(degree, order, len(consts))
     try:
         poly = poly_get(consts, exponents)
         if poly:
@@ -101,12 +99,12 @@ def poly_check(consts, degree = None, order = None, exponents = None):
             if true_min < MIN_PSLQ_DPS: # otherwise let pslq automatically set tol
                 tol_offset = mp.floor(mp.log10(consts[precs.index(true_min)].value)) - max(mp.floor(mp.log10(x)) for x in poly)
                 tol = mp.mpf(10)**(tol_offset - min(11,true_min))
-            with mp.workdps(MIN_PSLQ_DPS): # intentionally low-resolution to quickly try something basic...
+            with mp.workdps(test_prec): # intentionally low-resolution to quickly try something basic...
                 res = [1 if mp.mp.to_fixed(x, mp.mp.prec) == 0 else 0 for x in poly]
                 if any(res):
                     return res, mp.mp.dps # abort early! some numbers are too small!
                 res = pslq(poly, maxcoeff=mp.inf, maxsteps=mp.inf, tol=tol)
-            if res: # then calculating the substance in what we just found!
+            if res and test_prec >= min_roi * mp.log10(mp.norm(res, 1)): # then calculating the substance in what we just found!
                 return res, poly_eval(poly, res, [c.precision for c in consts])
     except ValueError:
         # one of the constants has too small precision, or one constant
@@ -158,9 +156,9 @@ def relation_is_new(consts, degree, order, other_relations):
 
 MIN_PRECISION_RATIO = 0.8
 MAX_PREC = 9999
-def check_consts(consts: List[PreciseConstant], exponents=None, degree=2, order=1, verbose=False):
+def check_consts(consts: List[PreciseConstant], exponents=None, degree=2, order=1, test_prec=15, min_roi=2, verbose=False):
     exponents = exponents if exponents else get_exponents(degree, order, len(consts))
-    result, true_prec = poly_check(consts, exponents = exponents)
+    result, true_prec = poly_check(consts, exponents = exponents, test_prec = test_prec, min_roi = min_roi)
     if not result:
         return []
     if verbose:
@@ -478,7 +476,7 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
                 if max(abs(v) for v in vec) < maxcoeff:
                     if verbose:
                         print("FOUND relation at iter %i/%i, error: %s" % \
-                            (REP, maxsteps, ctx.nstr(err / ctx.mpf(2)**prec, 1)))
+                            (REP, -1 if mp.isinf(maxsteps) else maxsteps, ctx.nstr(err / ctx.mpf(2)**prec, 1)))
                     return vec
             best_err = min(err, best_err)
         # Calculate a lower bound for the norm. We could do this
@@ -492,11 +490,11 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
             norm = ctx.inf
         if verbose:
             print("%i/%i:  Error: %8s   Norm: %s" % \
-                (REP, maxsteps, ctx.nstr(best_err / ctx.mpf(2)**prec, 1), norm))
+                (REP, -1 if mp.isinf(maxsteps) else maxsteps, ctx.nstr(best_err / ctx.mpf(2)**prec, 1), norm))
         if norm >= maxcoeff or REP >= maxsteps:
             break
     if verbose:
-        print("CANCELLING after step %i/%i." % (REP, maxsteps))
+        print("CANCELLING after step %i/%i." % (REP, -1 if mp.isinf(maxsteps) else maxsteps))
         print("Could not find an integer relation. Norm bound: %s" % norm)
     return None
 

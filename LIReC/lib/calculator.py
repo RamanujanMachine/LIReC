@@ -108,7 +108,7 @@ class Universal:
         return derived
     
     @staticmethod
-    def fill_pcf_canonical(const: PcfCanonicalConstant, pcf: PCF, calculation: PCFCalc or None = None):
+    def fill_pcf_canonical(const: PcfCanonicalConstant, pcf: PCF, calculation: PCFCalc or None = None, minimalist=False):
         const.original_a = [int(coef) for coef in pcf.a.all_coeffs()]
         const.original_b = [int(coef) for coef in pcf.b.all_coeffs()]
         top, bot = pcf.get_canonical_form()
@@ -118,9 +118,10 @@ class Universal:
             getcontext().prec = min(calculation.precision + 10, 16000)
             const.base.value = Decimal(str(calculation.value))
             const.base.precision = calculation.precision
-            const.last_matrix = reduce(lambda a, b: a + ',' + str(b), calculation.last_matrix[1:], str(calculation.last_matrix[0]))
             const.depth = calculation.depth
             const.convergence = calculation.convergence
+            if not minimalist: # last_matrix is a huge thing...
+                const.last_matrix = reduce(lambda a, b: a + ',' + str(b), calculation.last_matrix[1:], str(calculation.last_matrix[0]))
         return const
     
     @staticmethod

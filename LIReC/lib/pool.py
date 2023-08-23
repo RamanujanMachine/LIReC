@@ -26,8 +26,6 @@ from typing import Tuple, Dict, Any
 from types import ModuleType
 
 LOGGER_NAME = 'job_logger'
-COOLDOWN = 'cooldown'
-DEFAULT_COOLDOWN = 1
 NO_CRASH = True
 
 @dataclass
@@ -100,7 +98,7 @@ class WorkerPool:
         self.pool.join()
 
     @staticmethod
-    def run_module(module: ModuleType, module_path: str, job_queue: Queue, result_queue: Queue, run_async: bool, async_cores: int, split_async: bool, args: Dict[str, Any]) -> bool:
+    def run_module(module: ModuleType, module_path: str, job_queue: Queue, result_queue: Queue, run_async: bool, async_cores: int, args: Dict[str, Any]) -> bool:
         try:
             if not hasattr(module, 'run_query'):
                 module.execute_job(**args)
@@ -109,15 +107,15 @@ class WorkerPool:
             if queried_data == -1:
                 raise Exception('internal error')
             extra_args = getattr(module, 'EXECUTE_NEEDS_ARGS', False)
+            include_unsplit = getattr(module, 'INCLUDE_UNSPLIT', False)
             if not run_async:
                 results = [module.execute_job(queried_data, **args) if extra_args else module.execute_job(queried_data)]
             else:
                 async_cores = async_cores if async_cores != 0 else cpu_count()
                 total = len(queried_data)
-                if split_async:
-                    queried_data = WorkerPool.split_parameters(queried_data, async_cores)
-                for queried_chunk in queried_data:
-                    job_queue.put(Message.get_execution_message(module_path, (queried_chunk, args) if extra_args else queried_chunk))
+                for queried_chunk in WorkerPool.split_parameters(queried_data, async_cores):
+                    to_send = (queried_chunk, queried_data) if include_unsplit else queried_chunk
+                    job_queue.put(Message.get_execution_message(module_path, (to_send, args) if extra_args else to_send))
                 results = []
                 while len(results) != total:
                     if len(results) > total:
@@ -138,13 +136,12 @@ class WorkerPool:
             iterations = module_config.get('iterations', inf)
             run_async = module_config.get('run_async', False)
             async_cores = module_config.get('async_cores', 0)
-            split_async = module_config.get('split_async', True)
-            cooldown = module_config.get(COOLDOWN, DEFAULT_COOLDOWN)
+            cooldown = module_config.get('cooldown', 1)
             no_work_timeout = module_config.get('no_work_timeout', -1)
             iteration = 0
             while running.value and iteration < iterations:
                 start_time = time()
-                worked = WorkerPool.run_module(module, module_path, job_queue, result_queue, run_async, async_cores, split_async, args)
+                worked = WorkerPool.run_module(module, module_path, job_queue, result_queue, run_async, async_cores, args)
                 if not NO_CRASH and not worked:
                     break
                 if len(timings) < 30:

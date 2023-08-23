@@ -73,6 +73,16 @@ class DerivedConstant(Base):
     base = relationship('Constant', lazy='subquery')
 
 
+class PowerOfConstant(Base):
+    __tablename__ = 'power_of_constant'
+
+    const_id = Column(ForeignKey('constant.const_id'), primary_key=True)
+    based_on = Column(ForeignKey('constant.const_id'))
+    power = Column(Integer, nullable=False)
+    
+    base = relationship('Constant', lazy='subquery', foreign_keys=[const_id])
+
+
 class PcfFamily(Base):
     __tablename__ = 'pcf_family'
     __table_args__ = (

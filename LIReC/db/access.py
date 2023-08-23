@@ -51,7 +51,7 @@ class LIReC_DB:
         self.cache_path = str(Path(os.getcwd()) / 'lirec.cache')
         self.auto_recache_delay_sec = 60*60*24*7 # exactly one week
         self.cache = None
-        self.cached_tables = [models.Constant, models.NamedConstant, models.PcfCanonicalConstant]
+        self.cached_tables = [models.Constant, models.NamedConstant]#, models.PcfCanonicalConstant] # for now not caching pcfs!
         self.reconnect()
     
     def _redownload(self):
@@ -77,7 +77,7 @@ class LIReC_DB:
             self.session.rollback()
             self.session.close()
         # TODO can be unit-tested with mock-alchemy or alchemy-mock...
-        self.session = sessionmaker(bind=create_engine(str(connection), echo=False))()
+        self.session = sessionmaker(create_engine(str(connection), echo=False))()
         
     @property
     def constants(self):
@@ -99,11 +99,11 @@ class LIReC_DB:
         match = [d for c,d in self.names_with_descriptions if c==name]
         return match[0] if match else None
 
-    def add_pcf_canonical(self, pcf: PCF, calculation: PCFCalc or None = None) -> models.PcfCanonicalConstant:
+    def add_pcf_canonical(self, pcf: PCF, calculation: PCFCalc or None = None, minimalist=False) -> models.PcfCanonicalConstant:
         # TODO implement add_pcf_canonicals that uploads multiple at a time
         const = models.PcfCanonicalConstant()
         const.base = models.Constant()
-        self.session.add(Universal.fill_pcf_canonical(const, pcf, calculation))
+        self.session.add(Universal.fill_pcf_canonical(const, pcf, calculation, minimalist))
         
         # yes, commit and check error is better than preemptively checking if unique and then adding,
         # since the latter is two SQL commands instead of one, which breaks on "multithreading" for example
@@ -119,7 +119,7 @@ class LIReC_DB:
             self.session.rollback()
             raise e
 
-    def add_pcf(self, pcf: PCF) -> None:
+    def add_pcf(self, pcf: PCF, minimalist=False) -> None:
         """
         Expect PCF object.
         raises IntegrityError if pcf already exists in LIReC.
@@ -134,9 +134,9 @@ class LIReC_DB:
             raise PCFCalc.IllegalPCFException('Irrational or Complex roots in partial numerator are not allowed.')
         #calculation = LIReC_DB.calc_pcf(pcf, depth) if depth else None
         # By default the coefs are sympy.core.numbers.Integer but sql need them to be integers
-        return self.add_pcf_canonical(pcf, PCFCalc(pcf).run(**self.auto_pcf))
+        return self.add_pcf_canonical(pcf, PCFCalc(pcf).run(**self.auto_pcf), minimalist)
     
-    def add_pcfs(self, pcfs: Generator[PCF, None, None]) -> Tuple[List[models.PcfCanonicalConstant], Dict[str, List[PCF]]]:
+    def add_pcfs(self, pcfs: Generator[PCF, None, None], minimalist=False) -> Tuple[List[models.PcfCanonicalConstant], Dict[str, List[PCF]]]:
         """
         Expects a list of PCF objects.
         """
@@ -144,7 +144,7 @@ class LIReC_DB:
         unsuccessful = {'Already exist': [], 'No FR': [], 'Illegal': []}
         for pcf in pcfs:
             try:
-                successful.append(self.add_pcf(pcf))
+                successful.append(self.add_pcf(pcf, minimalist))
             except IntegrityError as e:
                 if not isinstance(e.orig, UniqueViolation):
                     raise e # otherwise already in LIReC
@@ -155,13 +155,13 @@ class LIReC_DB:
                 unsuccessful['Illegal'] += [pcf]
         return successful, unsuccessful
     
-    def add_pcfs_silent(self, pcfs: Generator[PCF, None, None]) -> None:
+    def add_pcfs_silent(self, pcfs: Generator[PCF, None, None], minimalist=False) -> None:
         """
         Expects a list of PCF objects. Doesn't return which PCFs were successfully or unsuccessfully added.
         """
         for pcf in pcfs:
             try:
-                self.add_pcf(pcf)
+                self.add_pcf(pcf, minimalist)
             except IntegrityError as e:
                 if not isinstance(e.orig, UniqueViolation):
                     raise e # otherwise already in LIReC

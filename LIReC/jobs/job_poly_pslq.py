@@ -9,15 +9,18 @@ Configured as such:
     a 4-variable polynomial of degree (3,1) will be of the form:
         a + bx+cy+dz+ew + fxy+gxz+hxw+iyz+jyw+kzw + lxyz+mxyw+nxzw+oyzw
     Note here the lack of any single variable with an exponent greater than 1, and also the lack of xyzw.
+'min_precision':
+    Only use constants with this much digital precision (everything else is ignored).
+'testing_precision' + 'min_roi':
+    Parameters passed to our modified PSLQ, see pslq_utils.poly_check for more information.
+    (if testing_precision is absent, min_precision is used instead)
 'bulk':
-    How many of each "bulk type" to scan. A class of constants is
-    considered a bulk type iff we expect to have a lot of it in LIReC
-    (specified by whether or not it's in the BULK_TYPES array).
+    If present, instead of testing all constants at once in the query phase,
+    only 'bulk' constants are added at a time to test for relations.
 'filters':
-    A dictionary that specifies which kinds of constants to use to look for relations. Currently supported:
-    global filters: 'min_precision' specifies the minimal precision value of constants that will be used.
-    'PcfCanonical': 'count' specifies how many pcf's at a time, 'balanced_only' filters to only PCFs of balanced degrees if set to True.
-    'Named': 'count' specifies how many named constants at a time.
+    A dictionary that specifies which kinds of constants to use to look for relations.
+    If present, no anti-relation logging can happen. Currently supported:
+    'PcfCanonical': 'balanced_only' filters to only PCFs of balanced degrees if set to True.
 '''
 import mpmath as mp
 from itertools import combinations, product

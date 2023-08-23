@@ -119,9 +119,9 @@ class Universal:
             const.base.value = Decimal(str(calculation.value))
             const.base.precision = calculation.precision
             const.depth = calculation.depth
-            const.convergence = calculation.convergence
             if not minimalist: # last_matrix is a huge thing...
                 const.last_matrix = reduce(lambda a, b: a + ',' + str(b), calculation.last_matrix[1:], str(calculation.last_matrix[0]))
+                const.convergence = calculation.convergence
         return const
     
     @staticmethod

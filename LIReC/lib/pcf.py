@@ -283,8 +283,7 @@ class PCFCalc:
         
         convergence = self.check_convergence(fr_list)
         if convergence == PCFCalc.Convergence.NO_FR:
-            ex = PCFCalc.NoFRException()
-            if not kwargs['no_exception']:
-                raise ex
+            if not kwargs['no_exception'] and kwargs['force_fr']:
+                raise PCFCalc.NoFRException()
         
         return PCFCalc.Result(value, 99999 if prec.is_infinite() else int(prec), [x for row in self.mat for x in row], self.depth, convergence.value)

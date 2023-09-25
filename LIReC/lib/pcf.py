@@ -1,5 +1,4 @@
 from __future__ import annotations
-from collections import namedtuple
 from enum import Enum
 import gmpy2
 from gmpy2 import mpz, xmpz, mpq
@@ -7,21 +6,221 @@ import mpmath as mp
 from sympy import Poly, gcd as sgcd, cancel
 from sympy.abc import n
 from time import time
-from typing import List, Tuple
+from typing import List, Tuple, Callable
+from LIReC.lib.pslq_utils import poly_check, PreciseConstant
 CanonicalForm = Tuple[List[int], List[int]]
 
+def _poly_eval(poly: List, n):
+    # current fastest method, poly must be coefficients in increasing order of exponent
+    # P.S.: if you're curious and don't feel like looking it up, the difference between
+    # mpz and xmpz is that xmpz is mutable, so in-place operations are faster
+    c = xmpz(1)
+    res = xmpz(0)
+    for coeff in poly:
+        res += coeff * c
+        c *= n
+    return mpz(res)
 
-class PCF:
+CALC_JUMP = 256
+REDUCE_JUMP = 128
+LOG_CALC_JUMP = 7
+LOG_REDUCE_JUMP = 6
+FR_THRESHOLD = 0.1
+MAX_PREC = mpz(99999)
+    
+class IllegalPCFException(Exception):
+    pass
+
+class NoFRException(Exception):
+    pass
+
+class ContinuedFraction:
+
+    class Util:
+    
+        @staticmethod
+        def mult(A: List[List], B: List[List]):
+            # yes it's faster to manually multiply than use numpy for instance!
+            return [[A[0][0] * B[0][0] + A[0][1] * B[1][0], A[0][0] * B[0][1] + A[0][1] * B[1][1]],
+                    [A[1][0] * B[0][0] + A[1][1] * B[1][0], A[1][0] * B[0][1] + A[1][1] * B[1][1]]]
+        
+        @staticmethod
+        def div_mat(mat, x) -> List[List]:
+            return [[mat[0][0] // x, mat[0][1] // x],[mat[1][0] // x, mat[1][1] // x]]
+        
+        @staticmethod
+        def as_mpf(q: mpq) -> mp.mpf:
+            return mp.mpf(q.numerator) / mp.mpf(q.denominator)
+        
+        @staticmethod
+        def combine(self: ContinuedFraction, mats, force: bool = False):
+            # technically it's not necessary to return mats since everything is in-place
+            # operations, but just in case one day a non-in-place operation is added...
+            orig_len = len(mats)
+            while len(mats) > 1 and (force or mats[-1][1] >= mats[-2][1]):
+                mat1 = mats.pop()
+                mat2 = mats.pop()
+                mats += [(ContinuedFraction.Util.mult(mat1[0], mat2[0]), mat1[1] + mat2[1])]
+            return self._end_combine(mats, orig_len, force)
+    
+    a: Callable[[int], Any]
+    b: Callable[[int], Any]
+    mat: List[List]
+    depth: int
+    true_value: mpq or None
+    
+    def __init__(self: ContinuedFraction, a: Callable[[int], Any], b: Callable[[int], Any], mat: List[int] or None = None, depth: int = 0):
+        self.a_func = a
+        self.b_func = b
+        self.mat = [mat[0:2], mat[2:4]] if mat else [[self.a_func(0), 1], [1, 0]]
+        self.depth = depth
+        self.true_value = None
+        self.eval_defaults = {
+            'depth': 8192, # at this depth, calculation of one PCF is expected to take about 3 seconds, depending on your machine
+            'precision': 50,
+            'timeout_sec': 0,
+            'timeout_check_freq': 1024,
+            'no_exception': False
+        }
+    
+    @property
+    def value(self: ContinuedFraction) -> mpq:
+        return mpq(self.mat[0][0], self.mat[0][1])
+    
+    @property
+    def precision(self: ContinuedFraction) -> gmpy2.mpfr:
+        to_compare = self.true_value if self.true_value != None else mpq(self.mat[1][0], self.mat[1][1])
+        return gmpy2.floor(-gmpy2.log10(abs(self.value - to_compare))) if all([self.mat[0][1], self.mat[1][1]]) else MAX_PREC
+    
+    def _pre_eval(self):
+        pass
+    
+    def _end_combine(self, mats, orig_len, force=False):
+        return mats, None
+    
+    def _end_depth(self, extras_list, kwargs):
+        return kwargs
+    
+    def _end_eval(self, value, prec, extras_list, kwargs):
+        return self
+    
+    def eval(self: ContinuedFraction, **kwargs) -> ContinuedFraction or Exception:
+        '''
+        Approximate the value of this PCF. Will first calculate to an initial depth,
+        and then will procedurally double the depth until the desired precision is obtained.
+        
+        Accepted kwargs: (others will be ignored)
+            'depth': Minimal depth to calculate to, defaults to 8192
+            'precision': Minimal precision to obtain, defaults to 50
+            'force_fr': Ensure the result has FR if possible (AKA keep going if INDETERMINATE_FR), defaults to True
+            'timeout_sec': If nonzero, halt calculation after this many seconds and return whatever you got, no matter what. Defaults to 0
+            'timeout_check_freq': Only check for timeout every this many iterations. Defaults to 1024
+            'no_exception': Return exceptions (or ContinuedFraction.Result if possible) instead of raising them (see below). Defaults to False
+        
+        Exceptions:
+            NoFRException: The PCF doesn't converge.
+            IllegalPCFException: The PCF has natural roots.
+        '''
+        # P.S.: The code here is in fact similar to enumerators.FREnumerator.check_for_fr, but
+        # the analysis we're doing here is both more delicate (as we allow numerically-indeterminate PCFs),
+        # and also less redundant (since we also want the value of the PCF instead of just discarding it for instance)
+        self._pre_eval()
+        mp.mp.dps = 100 # temporarily, to let the precision calculation work, will probably be increased later
+        kwargs = {**self.eval_defaults, **kwargs}
+        extras_list = []
+        start = time()
+        mats = [(self.mat, self.depth)]
+        while self.depth < kwargs['depth']:
+            self.depth += 1
+            mats, extra = ContinuedFraction.Util.combine(self, mats + [([[self.a_func(self.depth), self.b_func(self.depth)], [1, 0]], 1)])
+            if extra:
+                extras_list += [extra]
+            if kwargs['timeout_sec'] and self.depth % kwargs['timeout_check_freq'] == 0 and time() - start > kwargs['timeout_sec']:
+                break
+            if self.depth == kwargs['depth']:
+                self.mat = ContinuedFraction.Util.combine(self, mats, True)[0][0][0]
+                
+                prec = self.precision # check precision
+                if prec.is_infinite():
+                    ex = IllegalPCFException('continuant denominator zero')
+                    #if kwargs['no_exception']:
+                    #    return ex
+                    raise ex
+                if prec < kwargs['precision']:
+                    kwargs['depth'] *= 2
+                    continue
+                
+                kwargs = self._end_depth(extras_list, kwargs)
+                if isinstance(kwargs, Exception):
+                    #if kwargs['no_exception']:
+                    #    return ex
+                    raise ex
+        
+        self.mat = ContinuedFraction.Util.combine(self, mats, True)[0][0][0]
+        mp.mp.dps = max(100, self.precision)
+        value = ContinuedFraction.Util.as_mpf(self.value)
+        if mp.almosteq(0, value):
+            self.true_value = 0
+        
+        prec = self.precision
+        if prec.is_infinite():
+            ex = IllegalPCFException('continuant denominator zero')
+            if not kwargs['no_exception']:
+                raise ex
+        
+        rational, _ = poly_check([PreciseConstant(value, prec)], 1, 1, test_prec = int(prec))
+        if rational:
+            self.true_value = mpq(rational[0], -rational[1])
+        
+        return self._end_eval(value, prec, extras_list, kwargs)
+
+
+class PCF(ContinuedFraction):
     '''
     a polynomial continued fraction, represented by two Polys a, b:
     a0 + b1 / (a1 + b2 / (a2 + b3 / (...)))
     yes, this is the reverse of wikipedia's convention (i.e. https://en.wikipedia.org/wiki/Generalized_continued_fraction)
     '''
+
+    class Convergence(Enum):
+        ZERO_DENOM = 0 # now considered an illegal PCF
+        NO_FR = 1 # now considered an illegal PCF
+        INDETERMINATE_FR = 2
+        FR = 3
+        RATIONAL = 4
     
     a: Poly
     b: Poly
+    
+    def _pre_eval(self):
+        self.a_coeffs = [mpz(x) for x in reversed(self.a.all_coeffs())]
+        self.b_coeffs = [mpz(x) for x in reversed(self.b.all_coeffs())]
+    
+    def _end_depth(self, extras_list, kwargs):
+        if kwargs['force_fr']: # check convergence
+            convergence = self.check_convergence(extras_list)
+            if convergence == PCF.Convergence.NO_FR:
+                return NoFRException()
+            if convergence == PCF.Convergence.INDETERMINATE_FR:
+                kwargs['depth'] *= 2
+        return kwargs
+    
+    def _end_eval(self, value, prec, extras_list, kwargs):
+        self.convergence = self.check_convergence(extras_list)
+        if self.convergence == PCF.Convergence.NO_FR and not kwargs['no_exception'] and kwargs['force_fr']:
+            raise NoFRException()
+        
+        return self
 
-    def __init__(self: PCF, a: Poly or List[int], b: Poly or List[int], auto_deflate: bool = True) -> None:
+    def _end_combine(self, mats, orig_len, force=False):
+        if force or orig_len - len(mats) > LOG_REDUCE_JUMP:
+            gcd = gmpy2.gcd(*[x for row in mats[-1][0] for x in row])
+            mats[-1] = (ContinuedFraction.Util.div_mat(mats[-1][0], gcd), mats[-1][1])
+        if force or orig_len - len(mats) > LOG_CALC_JUMP:
+            return mats, gmpy2.log(gmpy2.gcd(*mats[-1][0][0])) / self.depth + (len(self.a_coeffs) - 1) * (1 - gmpy2.log(self.depth))
+        return mats, None
+    
+    def __init__(self: PCF, a: Poly or List[int], b: Poly or List[int], mat: List[int] or None = None, depth: int = 0, auto_deflate: bool = True) -> None:
         '''
         a_coeffs, b_coeffs: lists of integers from the largest power to the smallest power.
         '''
@@ -29,6 +228,9 @@ class PCF:
         self.b = b if isinstance(b, Poly) else Poly(b, n)
         if auto_deflate:
             self.deflate()
+        self._pre_eval()
+        super().__init__(lambda n: _poly_eval(self.a_coeffs, n), lambda n: _poly_eval(self.b_coeffs, n), mat, depth)
+        self.eval_defaults['force_fr'] = True
 
     def moving_canonical_form(self: PCF) -> Tuple(Poly, Poly):
         # Should always be real roots. (TODO modify if not!)
@@ -90,200 +292,15 @@ class PCF:
         a = Poly(canonical_form[1], n).compose(Poly(n + 1))
         b = Poly(canonical_form[0], n) * a
         return PCF(a.all_coeffs(), b.all_coeffs())
-
-
-CALC_JUMP = 256
-REDUCE_JUMP = 128
-LOG_CALC_JUMP = 7
-LOG_REDUCE_JUMP = 6
-FR_THRESHOLD = 0.1
-
-class PCFCalc:
-
-    class Convergence(Enum):
-        ZERO_DENOM = 0 # now considered an illegal PCF
-        NO_FR = 1 # now considered an illegal PCF
-        INDETERMINATE_FR = 2
-        FR = 3
-        RATIONAL = 4
     
-    class IllegalPCFException(Exception):
-        pass
-
-    class NoFRException(Exception):
-        pass
-
-    class Util:
-    
-        @staticmethod
-        def mult(A: List[List], B: List[List]):
-            # yes it's faster to manually multiply than use numpy for instance!
-            return [[mpz(A[0][0] * B[0][0] + A[0][1] * B[1][0]), mpz(A[0][0] * B[0][1] + A[0][1] * B[1][1])],
-                    [mpz(A[1][0] * B[0][0] + A[1][1] * B[1][0]), mpz(A[1][0] * B[0][1] + A[1][1] * B[1][1])]]
-        
-        @staticmethod
-        def poly_eval(poly: List, n):
-            # current fastest method, poly must be coefficients in increasing order of exponent
-            # P.S.: if you're curious and don't feel like looking it up, the difference between
-            # mpz and xmpz is that xmpz is mutable, so in-place operations are faster
-            c = xmpz(1)
-            res = xmpz(0)
-            for coeff in poly:
-                res += coeff * c
-                c *= n
-            return mpz(res)
-        
-        @staticmethod
-        def div_mat(mat, x) -> List[List]:
-            return [[mat[0][0] // x, mat[0][1] // x],[mat[1][0] // x, mat[1][1] // x]]
-        
-        @staticmethod
-        def as_mpf(q: mpq) -> mp.mpf:
-            return mp.mpf(q.numerator) / mp.mpf(q.denominator)
-        
-        @staticmethod
-        def combine(self: PCFCalc, mats, force: bool = False):
-            # technically it's not necessary to return mats since everything is in-place
-            # operations, but just in case one day a non-in-place operation is added...
-            orig = len(mats)
-            while len(mats) > 1 and (force or mats[-1][1] >= mats[-2][1]):
-                mat1 = mats.pop()
-                mat2 = mats.pop()
-                mats += [(PCFCalc.Util.mult(mat1[0], mat2[0]), mat1[1] + mat2[1])]
-            if force or orig - len(mats) > LOG_REDUCE_JUMP:
-                gcd = gmpy2.gcd(*[x for row in mats[-1][0] for x in row])
-                mats[-1] = (PCFCalc.Util.div_mat(mats[-1][0], gcd), mats[-1][1])
-            if force or orig - len(mats) > LOG_CALC_JUMP:
-                return mats, gmpy2.log(gmpy2.gcd(*mats[-1][0][0])) / self.depth + (len(self.a) - 1) * (1 - gmpy2.log(self.depth))
-            return mats, # this comma is not a typo! this becomes a 1-tuple
-    
-    Result = namedtuple('Result', ['value', 'precision', 'last_matrix', 'depth', 'convergence'])
-
-    a: List[mpz]
-    b: List[mpz]
-    mat: List[List[mpz]]
-    depth: int
-    
-    def __init__(self: PCFCalc, pcf: PCF, prev: List[int] or None = None, depth: int = 0):
-        # Util needs the coefficients in increasing order of exponent, not decreasing like all_coeffs gives    
-        self.a = [mpz(x) for x in reversed(pcf.a.all_coeffs())]
-        self.b = [mpz(x) for x in reversed(pcf.b.all_coeffs())]
-        #self.reduction = xmpz(1) # used to exist in the old code, not sure what use we have for this
-        self.mat = [prev[0:2], prev[2:4]] if prev else [[PCFCalc.Util.poly_eval(self.a, 0), 1], [1, 0]]
-        self.depth = depth
-    
-    def reduce(self: PCFCalc) -> None:
-        gcd = gmpy2.gcd(*[x for row in self.mat for x in row])
-        #self.reduction *= gcd
-        self.mat = PCFCalc.Util.div_mat(self.mat, gcd)
-    
-    @property
-    def value(self: PCFCalc) -> mpq:
-        return mpq(self.mat[0][0], self.mat[0][1])
-    
-    @property
-    def precision(self: PCFCalc) -> gmpy2.mpfr:
-        return gmpy2.floor(-gmpy2.log10(abs(self.value - mpq(self.mat[1][0], self.mat[1][1])))) if all([self.mat[0][1], self.mat[1][1]]) else -gmpy2.inf()
-    
-    def check_convergence(self: PCFCalc, fr_list) -> PCFCalc.Convergence:
-        val = self.value
-        p = val.numerator
-        val = PCFCalc.Util.as_mpf(val)
-        if mp.almosteq(p, 0) or mp.almosteq(val, 0) or mp.pslq([val, 1], tol=mp.power(10, -100)):
-            return PCFCalc.Convergence.RATIONAL
+    def check_convergence(self: ContinuedFraction, fr_list) -> PCF.Convergence:
+        if self.true_value != None:
+            return PCF.Convergence.RATIONAL
         
         if any(abs(fr_list[i + 1] - fr_list[i]) < FR_THRESHOLD for i in range(len(fr_list) - 1)):
-            return PCFCalc.Convergence.FR
+            return PCF.Convergence.FR
         
         if any(abs(fr_list[i + 1] - fr_list[i + 2]) > abs(fr_list[i] - fr_list[i + 1]) for i in range(len(fr_list) - 2)):
-            return PCFCalc.Convergence.NO_FR
+            return PCF.Convergence.NO_FR
         
-        return PCFCalc.Convergence.INDETERMINATE_FR
-    
-    def run(self: PCFCalc, **kwargs) -> PCFCalc.Result or Exception:
-        '''
-        Approximate the value of this PCF. Will first calculate to an initial depth,
-        and then will procedurally double the depth until the desired precision is obtained.
-        
-        Accepted kwargs: (others will be ignored)
-            'depth': Minimal depth to calculate to, defaults to 8192
-            'precision': Minimal precision to obtain, defaults to 50
-            'force_fr': Ensure the result has FR if possible (AKA keep going if INDETERMINATE_FR), defaults to True
-            'timeout_sec': If nonzero, halt calculation after this many seconds and return whatever you got, no matter what. Defaults to 0
-            'timeout_check_freq': Only check for timeout every this many iterations. Defaults to 1024
-            'no_exception': Return exceptions (or PCFCalc.Result if possible) instead of raising them (see below). Defaults to False
-        
-        Exceptions:
-            NoFRException: The PCF doesn't converge.
-            IllegalPCFException: The PCF has natural roots.
-        '''
-        # P.S.: The code here is in fact similar to enumerators.FREnumerator.check_for_fr, but
-        # the analysis we're doing here is both more delicate (as we allow numerically-indeterminate PCFs),
-        # and also less redundant (since we also want the value of the PCF instead of just discarding it for instance)
-        
-        DEFAULTS = {
-            'depth': 8192, # at this depth, calculation of one PCF is expected to take about 3 seconds, depending on your machine
-            'precision': 50,
-            'force_fr': True,
-            'timeout_sec': 0,
-            'timeout_check_freq': 1024,
-            'no_exception': False
-        }
-        mp.mp.dps = 100 # temporarily, to let the precision calculation work, will probably be increased later
-        kwargs = {**DEFAULTS, **kwargs}
-        fr_list = []
-        start = time()
-        mats = [(self.mat, self.depth)]
-        while self.depth < kwargs['depth']:
-            self.depth += 1
-            res = PCFCalc.Util.combine(self, mats + [([[PCFCalc.Util.poly_eval(self.a, self.depth), PCFCalc.Util.poly_eval(self.b, self.depth)], [1, 0]], 1)])
-            if len(res) > 1:
-                fr_list += [res[1]]
-            mats = res[0]
-            if kwargs['timeout_sec'] and self.depth % kwargs['timeout_check_freq'] == 0 and time() - start > kwargs['timeout_sec']:
-                break
-            if self.depth == kwargs['depth']:
-                res = PCFCalc.Util.combine(self, mats, True)
-                #fr_list += [res[1]]
-                self.mat = res[0][0][0]
-                
-                prec = self.precision # check precision
-                if prec.is_infinite():
-                    ex = PCFCalc.IllegalPCFException('continuant denominator zero')
-                    if kwargs['no_exception']:
-                        return ex
-                    raise ex
-                if prec < kwargs['precision']:
-                    kwargs['depth'] *= 2
-                    continue
-                
-                if kwargs['force_fr']: # check convergence
-                    convergence = self.check_convergence(fr_list)
-                    if convergence == PCFCalc.Convergence.NO_FR:
-                        ex = PCFCalc.NoFRException()
-                        if kwargs['no_exception']:
-                            return ex
-                        raise ex
-                    if convergence == PCFCalc.Convergence.INDETERMINATE_FR:
-                        kwargs['depth'] *= 2
-        
-        res = PCFCalc.Util.combine(self, mats, True)
-        #fr_list += [res[1]]
-        self.mat = res[0][0][0]
-        mp.mp.dps = max(100, self.precision) * 1.1 + 10 # a little extra leeway to find errors
-        value = PCFCalc.Util.as_mpf(self.value)
-        if value and mp.almosteq(0, value):
-            value = 0
-        
-        prec = self.precision
-        if prec.is_infinite():
-            ex = PCFCalc.IllegalPCFException('continuant denominator zero')
-            if not kwargs['no_exception']:
-                raise ex
-        
-        convergence = self.check_convergence(fr_list)
-        if convergence == PCFCalc.Convergence.NO_FR:
-            if not kwargs['no_exception'] and kwargs['force_fr']:
-                raise PCFCalc.NoFRException()
-        
-        return PCFCalc.Result(value, 99999 if prec.is_infinite() else int(prec), [x for row in self.mat for x in row], self.depth, convergence.value)
+        return PCF.Convergence.INDETERMINATE_FR

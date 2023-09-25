@@ -12,8 +12,9 @@ class PreciseConstant:
     symbol: str
     
     def __init__(self, value, precision, symbol=None):
-        self.value = mp.mpf(str(value))
         self.precision = precision
+        with mp.workdps(self.precision):
+            self.value = mp.mpf(str(value))
         self.symbol = symbol
 
 class PolyPSLQRelation:
@@ -75,7 +76,7 @@ def poly_get(consts, exponents):
 def poly_eval(poly, coeffs, precisions):
     with mp.workdps(max(precisions) + 10):
         min_prec = max(min(precisions), MIN_PSLQ_DPS)
-        return min(mp.floor(-mp.log10(abs(mp.fdot(poly, coeffs)))), min_prec)
+        return int(min(mp.floor(-mp.log10(abs(mp.fdot(poly, coeffs)))), min_prec))
 
 def poly_verify(consts, degree = None, order = None, relation = None, full_relation = None, exponents = None):
     if full_relation:
@@ -83,11 +84,11 @@ def poly_verify(consts, degree = None, order = None, relation = None, full_relat
         order = full_relation[1]
         relation = full_relation[2:]
     if not exponents:
-        exponents = get_exponents(degree, order)
+        exponents = get_exponents(degree, order, len(consts))
     poly = poly_get(consts, get_exponents(degree, order, len(consts)))
-    return poly_eval(poly, relation, [c.base.precision for c in consts]) if poly else None
+    return poly_eval(poly, relation, [c.precision for c in consts]) if poly else None
 
-def poly_check(consts, degree = None, order = None, exponents = None, test_prec = 15, min_roi = 2):
+def poly_check(consts, degree = None, order = None, exponents = None, test_prec = 15, min_roi = 2, verbose = False):
     if not exponents:
         exponents = get_exponents(degree, order, len(consts))
     try:
@@ -103,7 +104,7 @@ def poly_check(consts, degree = None, order = None, exponents = None, test_prec 
                 res = [1 if mp.mp.to_fixed(x, mp.mp.prec) == 0 else 0 for x in poly]
                 if any(res):
                     return res, mp.mp.dps # abort early! some numbers are too small!
-                res = pslq(poly, maxcoeff=mp.inf, maxsteps=mp.inf, tol=tol)
+                res = pslq(poly, tol, mp.inf, mp.inf, verbose)
             if res and test_prec >= min_roi * mp.log10(mp.norm(res, 1)): # then calculating the substance in what we just found!
                 return res, poly_eval(poly, res, [c.precision for c in consts])
     except ValueError:
@@ -119,6 +120,7 @@ def compress_relation(result, consts, exponents, degree, order, verbose=False):
     # will need to use later, so evaluating into lists
     cond_print(verbose, f'Original relation is {result}')
     
+    consts = list(consts) # shallow copy to preserve the original list
     indices_per_var = [[i for i, e in enumerate(exponents) if e[j]] for j in range(len(consts))]
     redundant_vars = [i for i, e in enumerate(indices_per_var) if not any(result[j] for j in e)]
     redundant_coeffs = set()
@@ -148,42 +150,43 @@ def compress_relation(result, consts, exponents, degree, order, verbose=False):
     
     cond_print(verbose, f'Compressed relation is {result}')
 
-    return result, consts, degree, order
+    return PolyPSLQRelation(consts, degree, order, result)
 
-def relation_is_new(consts, degree, order, other_relations):
-    return not any(r for r in other_relations
-                   if {c.symbol for c in r.constants} <= {c.symbol for c in consts} and r.degree <= degree and r.order <= order)
+def combination_is_old(consts, degree, order, other_relations):
+    return any(r for r in other_relations
+               if {c.symbol for c in r.constants} <= {c.symbol for c in consts} and r.degree <= degree and r.order <= order)
 
 MIN_PRECISION_RATIO = 0.8
-MAX_PREC = 9999
+MAX_PREC = 99999
+
+def check_subrelations(relation: PolyPSLQRelation, true_prec, test_prec=15, min_roi=2, extra_relations=None, verbose=False):
+    subrelations = []
+    extra_relations = extra_relations if extra_relations else []
+    for i in range(1, len(relation.constants)):
+        exponents = get_exponents(relation.degree, relation.order, i)
+        for subset in combinations(relation.constants, i):
+            if combination_is_old(subset, relation.degree, relation.order, subrelations + extra_relations):
+                continue
+            subresult, true_prec2 = poly_check(subset, relation.degree, relation.order, exponents, test_prec, min_roi, verbose)
+            if subresult:
+                subrel = compress_relation(subresult, list(subset), exponents, relation.degree, relation.order)
+                if true_prec2 >= MIN_PRECISION_RATIO * min(c.precision for c in subrel.constants):
+                    true_prec2 = min(true_prec2, MAX_PREC)
+                    subrelations += [subrel]
+    return subrelations if subrelations else [] if true_prec < MIN_PRECISION_RATIO * test_prec else [relation]
+
 def check_consts(consts: List[PreciseConstant], exponents=None, degree=2, order=1, test_prec=15, min_roi=2, verbose=False):
     exponents = exponents if exponents else get_exponents(degree, order, len(consts))
-    result, true_prec = poly_check(consts, exponents = exponents, test_prec = test_prec, min_roi = min_roi)
+    result, true_prec = poly_check(consts, degree, order, exponents, test_prec, min_roi, verbose)
     if not result:
         return []
     if verbose:
         with mp.workdps(5):
-            r = str(true_prec / mp.mp.dps)
-        print(f'Found relation with precision ratio {r}')
-    if true_prec / mp.mp.dps < MIN_PRECISION_RATIO:
-        cond_print(verbose, f'Too low! Ignoring...')
-        return []
-    result, new_consts, new_degree, new_order = compress_relation(result, consts, exponents, degree, order)
+            print(f'Found relation with precision ratio {true_prec / mp.mp.dps}')
     # now must check subrelations! PSLQ is only guaranteed to return a small norm,
     # but not guaranteed to return a 1-dimensional relation, see for example pslq([1,2,3])
-    subrelations = []
-    for i in range(1, len(consts)):
-        exponents = get_exponents(degree, order, i)
-        for subset in combinations(consts, i):
-            subresult, true_prec2 = poly_check(subset, exponents = exponents)
-            if subresult:
-                subset = list(subset)
-                subresult, subconsts, subdegree, suborder = compress_relation(subresult, subset, exponents, degree, order)
-                if relation_is_new(subconsts, subdegree, suborder, subrelations) and true_prec2 / mp.mp.dps >= MIN_PRECISION_RATIO: # no need to check against new_relations + old_relations here btw
-                    true_prec2 = min(true_prec2, MAX_PREC)
-                    subrelations += [PolyPSLQRelation(subconsts, subdegree, suborder, subresult)]
     true_prec = min(true_prec, MAX_PREC)
-    return subrelations if subrelations else [PolyPSLQRelation(new_consts, new_degree, new_order, result)]
+    return check_subrelations(compress_relation(result, consts, exponents, degree, order), true_prec, test_prec, min_roi, [], verbose)
 
 
 # ===== COPYPASTED FROM mpmath\identification.py WITH MODIFICATIONS =====

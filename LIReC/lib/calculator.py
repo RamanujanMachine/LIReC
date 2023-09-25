@@ -108,20 +108,21 @@ class Universal:
         return derived
     
     @staticmethod
-    def fill_pcf_canonical(const: PcfCanonicalConstant, pcf: PCF, calculation: PCFCalc or None = None, minimalist=False):
+    def fill_pcf_canonical(const: PcfCanonicalConstant, pcf: PCF, minimalist=False):
         const.original_a = [int(coef) for coef in pcf.a.all_coeffs()]
         const.original_b = [int(coef) for coef in pcf.b.all_coeffs()]
         top, bot = pcf.get_canonical_form()
         const.P = [int(coef) for coef in top.all_coeffs()]
         const.Q = [int(coef) for coef in bot.all_coeffs()]
-        if calculation:
-            getcontext().prec = min(calculation.precision + 10, 16000)
-            const.base.value = Decimal(str(calculation.value))
-            const.base.precision = calculation.precision
-            const.depth = calculation.depth
+        if pcf.depth:
+            getcontext().prec = min(pcf.precision + 10, 16000)
+            const.base.value = Decimal(str(pcf.value))
+            const.base.precision = pcf.precision
+            const.depth = pcf.depth
             if not minimalist: # last_matrix is a huge thing...
-                const.last_matrix = reduce(lambda a, b: a + ',' + str(b), calculation.last_matrix[1:], str(calculation.last_matrix[0]))
-                const.convergence = calculation.convergence
+                mat = [x for row in pcf.mat for x in row]
+                const.last_matrix = reduce(lambda a, b: a + ',' + str(b), mat[1:], str(mat[0]))
+                const.convergence = pcf.convergence
         return const
     
     @staticmethod
@@ -138,8 +139,9 @@ class Universal:
             depth = ext.depth
             depth_multiplier = depth_multiplier if depth_multiplier else 2 # intended for use from calc or calc_silent, then the multiplier gives this meaning
         
-        res = PCFCalc(pcf, prev, depth).run(depth=depth*depth_multiplier, precision=0)
-        return Universal.fill_pcf_canonical(ext, pcf, res)
+        pcf.mat = [prev[:2], prev[2:]]
+        pcf.depth = depth
+        return Universal.fill_pcf_canonical(ext, pcf.eval(depth=depth*depth_multiplier, precision=0))
     
     @staticmethod
     def calc_silent(ext, db, const=None):
@@ -189,7 +191,7 @@ class DerivedConstants:
         n = Symbol('n')
         h1 = prod(n - r for r in base_roots)
         h2 = prod(n - r - d for r, d in zip(base_roots, diffs))
-        return PCFCalc(PCF(Poly(h1 + compose(h2, n + 1)), Poly(-h1 * h2))).run(precision = mp.mp.dps, timeout_sec = timeout_sec)
+        return PCF(Poly(h1 + compose(h2, n + 1)), Poly(-h1 * h2)).eval(precision = mp.mp.dps, timeout_sec = timeout_sec)
 
     @staticmethod
     def pcf_family_instance(db, family_id, args, timeout_sec=0):
@@ -197,14 +199,14 @@ class DerivedConstants:
         evaluates the PCF from the given family, using the given arguments.
         the string representation of the family's polynomials is expected to have its arguments as c0,c1,c2,c3,...
         also not all arguments have to be present in both polynomials in the family.
-        returns a PCFCalc.Result instead of an mp.mpf
+        returns a PCF instead of an mp.mpf
         '''
         family = db.session.query(PcfFamily).filter(PcfFamily.family_id == family_id).first()
         if not family:
             raise Exception(f'pcf family with id {family_id} not found')
         a = Poly(family.a).eval({f'c{i}': v for i, v in enumerate(args) if f'c{i}' in family.a})
         b = Poly(family.b).eval({f'c{i}': v for i, v in enumerate(args) if f'c{i}' in family.b})
-        return PCFCalc(PCF(a, b)).run(precision = mp.mp.dps, timeout_sec = timeout_sec)
+        return PCF(a, b).eval(precision = mp.mp.dps, timeout_sec = timeout_sec)
 
     @staticmethod
     def lwt1(db, aux, poly, start):

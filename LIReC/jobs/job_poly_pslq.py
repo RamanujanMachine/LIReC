@@ -23,7 +23,7 @@ Configured as such:
     'PcfCanonical': 'balanced_only' filters to only PCFs of balanced degrees if set to True.
 '''
 import mpmath as mp
-from itertools import combinations, product
+from itertools import combinations, groupby, product
 from logging import getLogger
 from logging.config import fileConfig
 from os import getpid
@@ -31,38 +31,36 @@ from sqlalchemy import or_
 from sqlalchemy.sql.expression import func
 from time import time
 from traceback import format_exc
-from LIReC.db import models, access
+from typing import List, Dict
+from LIReC.db.access import db
+from LIReC.db import models
 from LIReC.lib.pslq_utils import *
 
 EXECUTE_NEEDS_ARGS = True
+
 DEBUG_PRINT_CONSTANTS = True
 
 ALGORITHM_NAME = 'POLYNOMIAL_PSLQ'
+UNRELATION_NAME = 'NO_PSLQ'
 LOGGER_NAME = 'job_logger'
-BULK_SIZE = 500
+MIN_PRECISION_RATIO = 0.8
+MAX_PREC = 99999
+EXTENSION_TYPES = ['PowerOf', 'Derived', 'PcfCanonical', 'Named'] # ordered by increasing priority
 BULK_TYPES = {'PcfCanonical'}
 SUPPORTED_TYPES = ['Named', 'PcfCanonical']
 DEFAULT_CONST_COUNT = 1
-DEFAULT_DEGREE = 2
-DEFAULT_ORDER = 1
 
-FILTERS = [
-        models.Constant.precision.isnot(None)
-        #or_(models.Cf.scanned_algo == None, ~models.Cf.scanned_algo.has_key(ALGORITHM_NAME)) # TODO USE scan_history TABLE!!!
-        ]
-
-def get_filters(filters, const_type):
-    filter_list = list(FILTERS) # copy!
-    if 'global' in filters:
-        global_filters = filters['global']
-        if 'min_precision' in global_filters:
-            filter_list += [models.Constant.precision >= global_filters['min_precision']]
-    if const_type == 'PcfCanonical':
-        filter_list += [models.PcfCanonicalConstant.convergence != models.PcfConvergence.RATIONAL.value]
-        if filters['PcfCanonical'].get('balanced_only', False):
-            filter_list += [func.cardinality(models.PcfCanonicalConstant.P) == func.cardinality(models.PcfCanonicalConstant.Q)]
-
-    return filter_list 
+# need to keep hold of the original db constant, but pslq_utils doesn't care for that so this is separate here
+class DualConstant(PreciseConstant):
+    orig: models.Constant
+    
+    def __init__(self, value, precision, orig, symbol=None):
+        self.orig = orig
+        super().__init__(value, precision, symbol)
+    
+    @staticmethod
+    def from_db(const: models.Constant):
+        return DualConstant(const.value, const.precision, const, f'C_{const.const_id}')
 
 def get_const_class(const_type):
     name = const_type + 'Constant'
@@ -70,106 +68,93 @@ def get_const_class(const_type):
         raise ValueError(f'Unknown constant type {const_type}')
     return models.__dict__[name]
 
-def get_consts_from_query(const_type, query_data):
-    const_type = get_const_class(const_type)
-    return query_data[[i for i in range(len(query_data)) if isinstance(query_data[i][0], const_type)][0]]
+def is_workable(x, prec, roi):
+    return x and roi * abs(mp.log10(x)) < prec # first testing if x is zero to avoid computing log10(x)
 
-def get_consts(const_type, db, filters):
-    if const_type == 'Named': # Constant first intentionally! don't need extra details, but want to filter still
-        return db.session.query(models.Constant).join(models.NamedConstant).order_by(models.NamedConstant.const_id).filter(*get_filters(filters, const_type))    
+def lowest_priority(consts: List[DualConstant], priorities: Dict[str, int]):
+    return sorted(consts, key=lambda c: (-priorities[c.orig.const_id], c.orig.time_added))[-1]
 
-def run_query(filters=None, degree=None, bulk=None):
+def to_db_format(relation: PolyPSLQRelation) -> models.Relation:
+    res = models.Relation()
+    res.relation_type = ALGORITHM_NAME
+    res.precision = relation.precision
+    res.details = [relation.degree, relation.order] + relation.coeffs
+    res.constants = [c.orig for c in relation.constants] # inner constants need to be DualConstant, else this fails
+    return res
+
+def from_db_format(relation: models.Relation, consts: List[DualConstant]) -> PolyPSLQRelation:
+    # the symbols don't matter much, just gonna keep them unique within the relation itself
+    # the orig.const_id will decide anyway
+    return PolyPSLQRelation(consts, relation.details[0], relation.details[1], relation.details[2:])
+
+def all_relations() -> List[PolyPSLQRelation]:
+    # faster to query everything at once!
+    consts = {c.const_id:DualConstant.from_db(c) for c in db.session.query(models.Constant) if c.value}
+    rels = {r.relation_id:r for r in db.session.query(models.Relation)}
+    return [from_db_format(rels[relation_id], [consts[p[0]] for p in g]) for relation_id, g in groupby(db.session.query(models.constant_in_relation_table), lambda p:p[1])]
+
+def run_query(degree=2, order=1, min_precision=50, min_roi=2, testing_precision=15, bulk=10, filters=None):
     fileConfig('LIReC/logging.config', defaults={'log_filename': 'pslq_const_manager'})
-    if not filters:
-        return []
-    bulk_types = set(filters.keys()) & BULK_TYPES
-    if not bulk_types:
-        return []
-    bulk = bulk if bulk else BULK_SIZE
+    testing_precision = testing_precision if testing_precision else min_precision
+    consts = [[c] for c in db.session.query(models.Constant).filter(models.Constant.precision >= min_precision).order_by(models.Constant.const_id)]
+    for i, const_type in enumerate(EXTENSION_TYPES):
+        const_class = get_const_class(const_type)
+        exts = db.session.query(const_class)
+        if const_type == 'PcfCanonical': # no rationals please
+            exts = exts.filter(models.PcfCanonicalConstant.convergence != models.PcfConvergence.RATIONAL.value)
+        exts = exts.all() # evaluate once then reuse
+        consts = [c + [e for e in exts if e.const_id == c[0].const_id] for c in consts]
+        if filters and filters.get(const_type, {}):
+            if const_type == 'PcfCanonical' and filters[const_type].get('balanced_only', False):
+                consts = [c for c in consts if len(c[-1].P) == len(c[-1].Q)]
+        consts = [([c[0], i] if isinstance(c[-1], const_class) else c) for c in consts] # don't need the extension data after filtering, and only need the top priority extension type
+    
+    # enforce constants that have extensions! also enforce "workable numbers" which are not "too large" nor "too small" (in particular nonzero)
+    # also don't really care about symbolic representation for the constants here, just need them to be unique
+    priorities = {c[0].const_id : c[1] for c in consts if len(c) > 1}
+    consts = [DualConstant.from_db(c[0]) for c in consts if len(c) > 1 and is_workable(c[0].value, testing_precision, min_roi)]
+    testing_consts = []
+    refill = True
+    relations = []
+    
+    # TODO query existing relations and use them to remove constants that have been connected already
+    
     getLogger(LOGGER_NAME).debug(f'Starting to check relations, using bulk size {bulk}')
-    db = access.LIReC_DB()
-    results = [db.session.query(models.Constant).join(get_const_class(const_type)).filter(*get_filters(filters, const_type)).order_by(func.random()).limit(bulk).all() for const_type in bulk_types]
-    # apparently postgresql is really slow with the order_by(random) part,
-    # but on 1000 CFs it only takes 1 second, which imo is worth it since
-    # that allows us more variety in testing the CFs...
-    # TODO what to do if results is unintentionally empty?
-    db.session.close()
-    getLogger(LOGGER_NAME).info(f'size of batch is {len(results) * bulk}')
-    return results
+    while not (refill and not consts): # keep going until you want to refill but can't
+        if refill:
+            testing_consts += consts[:bulk]
+            consts = consts[bulk:]
+            refill = False
+        new_rels = check_consts(testing_consts, None, degree, order, testing_precision, min_roi)
+        if new_rels:
+            relations += new_rels
+            testing_consts = list(set(testing_consts) - {lowest_priority(r.constants, priorities) for r in new_rels})
+        else:
+            refill = True
+    
+    # TODO log unrelation
+    
+    db.session.add_all([to_db_format(r) for r in relations])
+    db.session.commit()
+    return relations
+    # TODO investigate randomness! on catalan+22 pcfs, sometimes finds 57 relations, sometimes finds 59
 
-def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, manual=False):
-    try: # whole thing must be wrapped so it gets logged
-        fileConfig('LIReC/logging.config', defaults={'log_filename': 'analyze_pcfs' if manual else f'pslq_const_worker_{getpid()}'})
-        global_filters = filters.get('global', {})
-        filters.pop('global', 0) # instead of del so we can silently dispose of global even if it doesn't exist
-        if not filters:
-            getLogger(LOGGER_NAME).error('No filters found! Aborting...')
-            return 0 # this shouldn't happen unless pool_handler changes, so just in case...
-        keys = filters.keys()
-        for const_type in keys:
-            if const_type not in SUPPORTED_TYPES:
-                msg = f'Unsupported filter type {const_type} will be ignored! Must be one of {SUPPORTED_TYPES}.'
-                print(msg)
-                getLogger(LOGGER_NAME).warn(msg)
-                del filters[const_type]
-            elif 'count' not in filters[const_type]:
-                filters[const_type]['count'] = DEFAULT_CONST_COUNT
-        total_consts = sum(c['count'] for c in filters.values())
-        degree = degree if degree else DEFAULT_DEGREE
-        order = order if order else DEFAULT_ORDER
-        getLogger(LOGGER_NAME).info(f'checking against {total_consts} constants at a time, subdivided into {({k : filters[k]["count"] for k in filters})}, using degree-{degree} relations')
-        if degree > total_consts * order:
-            degree = total_consts * order
-            getLogger(LOGGER_NAME).info(f'redundant degree detected! reducing to {degree}')
-        
-        db = access.LIReC_DB()
-        subsets = [combinations(get_consts_from_query(const_type, query_data) if const_type in BULK_TYPES else get_consts(const_type, db, {**filters, 'global':global_filters}), filters[const_type]['count']) for const_type in filters]
-        exponents = get_exponents(degree, order, total_consts)
-        
-        old_relations = db.session.query(models.Relation).all()
-        orig_size = len(old_relations)
-        # even if the commented code were to be uncommented and implemented for
-        # the scan_history table, this loop still can't be turned into list comprehension
-        # because finding new relations depends on the new relations we found so far!
-        for consts in product(*subsets):
-            consts = [c for t in consts for c in t] # need to flatten...
-            if relation_is_new(consts, degree, order, old_relations):
-                if DEBUG_PRINT_CONSTANTS:
-                    getLogger(LOGGER_NAME).debug(f'checking consts: {[c.const_id for c in consts]}')
-                new_relations = check_consts(consts, exponents, degree, order)
-                if new_relations:
-                    getLogger(LOGGER_NAME).info(f'Found relation(s) on constants {[c.const_id for c in consts]}!')
-                    try_count = 1
-                    while try_count < 3:
-                        try:
-                            db.session.add_all(new_relations)
-                            db.session.commit()
-                            old_relations += new_relations
-                        except:
-                            db.session.rollback()
-                            #db.session.close()
-                            #db = access.LIReC_DB()
-                            if try_count == 1:
-                                getLogger(LOGGER_NAME).warn('Failed to commit once, trying again.')
-                            else:
-                                getLogger(LOGGER_NAME).error(f'Could not commit relation(s): {format_exc()}')
-                        try_count += 1
-            #for cf in consts:
-            #    if not cf.scanned_algo:
-            #        cf.scanned_algo = dict()
-            #    cf.scanned_algo[ALGORITHM_NAME] = int(time())
-            #db.session.add_all(consts)
-        getLogger(LOGGER_NAME).info(f'finished - found {len(old_relations) - orig_size} results')
-        db.session.close()
-        
-        getLogger(LOGGER_NAME).info('Commit done')
-        
-        return len(new_relations)
-    except:
-        getLogger(LOGGER_NAME).error(f'Exception in execute job: {format_exc()}')
-        # not returning anything so summarize_results can see the error
+def execute_job(query_data, degree=2, order=1, min_precision=50, min_roi=2, testing_precision=None, bulk=None, filters=None, manual=False):
+    # actually faster to manually query everything at once!
+    testing_precision = testing_precision if testing_precision else min_precision
+    relations = all_relations()
+    new_relations = []
+    for i, (r1, r2) in enumerate(product(query_data, relations)):
+        dummy_rel = PolyPSLQRelation(r1.constants + [c for c in r2.constants if c.orig.const_id not in [c.orig.const_id for c in r1.constants]],
+                                     max(r1.degree, r2.degree), max(r1.order, r2.order), []) # coeffs don't matter!
+        new_relations += [r for r in check_subrelations(dummy_rel, min(r1.precision, r2.precision), testing_precision, min_roi, relations + new_relations) if r.coeffs]
+    return new_relations
 
 def summarize_results(results):
-    if not all(results):
-        getLogger(LOGGER_NAME).info(f'At least one of the workers had an exception! Check logs')
-    getLogger(LOGGER_NAME).info(f'In total found {sum(r for r in results if r)} relations')
+    relations = all_relations()
+    new_relations = []
+    for result in results:
+        new_relations += [r for r in result if not combination_is_old(r.constants, r.degree, r.order, relations+new_relations)] 
+    db.session.add_all([to_db_format(r) for r in new_relations])
+    db.session.commit()
+    getLogger(LOGGER_NAME).info(f'In total found {len(new_relations)} relations in all subjobs')

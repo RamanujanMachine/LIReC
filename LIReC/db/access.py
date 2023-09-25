@@ -99,11 +99,11 @@ class LIReC_DB:
         match = [d for c,d in self.names_with_descriptions if c==name]
         return match[0] if match else None
 
-    def add_pcf_canonical(self, pcf: PCF, calculation: PCFCalc or None = None, minimalist=False) -> models.PcfCanonicalConstant:
+    def add_pcf_canonical(self, pcf: PCF, minimalist=False) -> models.PcfCanonicalConstant:
         # TODO implement add_pcf_canonicals that uploads multiple at a time
         const = models.PcfCanonicalConstant()
         const.base = models.Constant()
-        self.session.add(Universal.fill_pcf_canonical(const, pcf, calculation, minimalist))
+        self.session.add(Universal.fill_pcf_canonical(const, pcf, minimalist))
         
         # yes, commit and check error is better than preemptively checking if unique and then adding,
         # since the latter is two SQL commands instead of one, which breaks on "multithreading" for example
@@ -127,14 +127,14 @@ class LIReC_DB:
         raises IllegalPCFException if the pcf has natural roots or if its b_n has irrational roots.
         """
         if any(r for r in pcf.a.real_roots() if r.is_integer and r > 0):
-            raise PCFCalc.IllegalPCFException('Natural root in partial denominator ensures divergence.')
+            raise IllegalPCFException('Natural root in partial denominator ensures divergence.')
         if any(r for r in pcf.b.real_roots() if r.is_integer and r > 0):
-            raise PCFCalc.IllegalPCFException('Natural root in partial numerator ensures trivial convergence to a rational number.')
+            raise IllegalPCFException('Natural root in partial numerator ensures trivial convergence to a rational number.')
         if any(r for r in pcf.b.all_roots() if not r.is_rational):
-            raise PCFCalc.IllegalPCFException('Irrational or Complex roots in partial numerator are not allowed.')
+            raise IllegalPCFException('Irrational or Complex roots in partial numerator are not allowed.')
         #calculation = LIReC_DB.calc_pcf(pcf, depth) if depth else None
         # By default the coefs are sympy.core.numbers.Integer but sql need them to be integers
-        return self.add_pcf_canonical(pcf, PCFCalc(pcf).run(**self.auto_pcf), minimalist)
+        return self.add_pcf_canonical(pcf.eval(**self.auto_pcf), minimalist)
     
     def add_pcfs(self, pcfs: Generator[PCF, None, None], minimalist=False) -> Tuple[List[models.PcfCanonicalConstant], Dict[str, List[PCF]]]:
         """
@@ -149,9 +149,9 @@ class LIReC_DB:
                 if not isinstance(e.orig, UniqueViolation):
                     raise e # otherwise already in LIReC
                 unsuccessful['Already exist'] += [pcf]
-            except PCFCalc.NoFRException:
+            except NoFRException:
                 unsuccessful['No FR'] += [pcf]
-            except PCFCalc.IllegalPCFException:
+            except IllegalPCFException:
                 unsuccessful['Illegal'] += [pcf]
         return successful, unsuccessful
     
@@ -165,9 +165,9 @@ class LIReC_DB:
             except IntegrityError as e:
                 if not isinstance(e.orig, UniqueViolation):
                     raise e # otherwise already in LIReC
-            except PCFCalc.NoFRException:
+            except NoFRException:
                 pass
-            except PCFCalc.IllegalPCFException:
+            except IllegalPCFException:
                 pass
     
     @staticmethod

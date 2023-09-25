@@ -107,15 +107,13 @@ class WorkerPool:
             if queried_data == -1:
                 raise Exception('internal error')
             extra_args = getattr(module, 'EXECUTE_NEEDS_ARGS', False)
-            include_unsplit = getattr(module, 'INCLUDE_UNSPLIT', False)
             if not run_async:
                 results = [module.execute_job(queried_data, **args) if extra_args else module.execute_job(queried_data)]
             else:
                 async_cores = async_cores if async_cores != 0 else cpu_count()
                 total = len(queried_data)
                 for queried_chunk in WorkerPool.split_parameters(queried_data, async_cores):
-                    to_send = (queried_chunk, queried_data) if include_unsplit else queried_chunk
-                    job_queue.put(Message.get_execution_message(module_path, (to_send, args) if extra_args else to_send))
+                    job_queue.put(Message.get_execution_message(module_path, (queried_chunk, args) if extra_args else queried_chunk))
                 results = []
                 while len(results) != total:
                     if len(results) > total:

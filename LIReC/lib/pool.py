@@ -71,7 +71,7 @@ class WorkerPool:
         for module_path, module_config in modules:
             self.result_queues[module_path] = self.manager.Queue()
             results.append(self.pool.apply_async(
-                WorkerPool.run_job, 
+                WorkerPool.run_job,
                 (self.running, self.job_queue, self.result_queues[module_path], module_path, module_config)
             ))
         
@@ -111,14 +111,11 @@ class WorkerPool:
                 results = [module.execute_job(queried_data, **args) if extra_args else module.execute_job(queried_data)]
             else:
                 async_cores = async_cores if async_cores != 0 else cpu_count()
-                total = len(queried_data)
                 for queried_chunk in WorkerPool.split_parameters(queried_data, async_cores):
                     job_queue.put(Message.get_execution_message(module_path, (queried_chunk, args) if extra_args else queried_chunk))
                 results = []
-                while len(results) != total:
-                    if len(results) > total:
-                        raise Exception('too many results! check your code')
-                    results += result_queue.get()
+                while len(results) < async_cores:
+                    results.append(result_queue.get())
             module.summarize_results(results)
             return True
         except:
@@ -128,14 +125,13 @@ class WorkerPool:
     @staticmethod
     def run_job(running, job_queue, result_queue, module_path, module_config) -> Tuple[str, float]:
         try:
+            fileConfig('LIReC/logging.config', defaults={'log_filename': 'pool_run_job'})
             module = import_module(module_path)
             args = module_config.get('args', {})
             timings = []
             iterations = module_config.get('iterations', inf)
             run_async = module_config.get('run_async', False)
             async_cores = module_config.get('async_cores', 0)
-            cooldown = module_config.get('cooldown', 1)
-            no_work_timeout = module_config.get('no_work_timeout', -1)
             iteration = 0
             while running.value and iteration < iterations:
                 start_time = time()
@@ -145,11 +141,6 @@ class WorkerPool:
                 if len(timings) < 30:
                     timings.append(time() - start_time)
                 iteration += 1
-                sleep(cooldown)
-                if no_work_timeout == -1:
-                    break
-                else:
-                    sleep(no_work_timeout)
             
             job_queue.put(Message.get_kill_message())
             return module_path, timings

@@ -4,7 +4,7 @@ from itertools import chain, combinations, combinations_with_replacement, count,
 from operator import mul, add
 from typing import List
 import mpmath as mp
-from sympy import sympify
+from sympy import sympify, Symbol
 
 class PreciseConstant:
     value: mp.mpf
@@ -39,8 +39,14 @@ class PolyPSLQRelation:
     
     def __str__(self):
         exponents = get_exponents(self.degree, self.order, len(self.constants))
-        monoms = [reduce(add, (f'*{self.constants[i].symbol or "c"+str(i)}**{exp[i]}' for i in range(len(self.constants))), f'{self.coeffs[j]}') for j, exp in enumerate(exponents)]
-        expr = sympify(reduce(add, ['+'+monom for monom in monoms], ''))
+        for i,c in enumerate(self.constants): # verify symbols
+            if not c.symbol:
+                c.symbol = f'c{i}'
+            if not isinstance(c.symbol, Symbol):
+                c.symbol = Symbol(c.symbol)
+            
+        monoms = [reduce(mul, (c.symbol**exp[i] for i,c in enumerate(self.constants)), self.coeffs[j]) for j, exp in enumerate(exponents)]
+        expr = sympify(reduce(add, monoms, 0))
         
         self.__fix_isolate()
         if self.isolate not in expr.free_symbols or not expr.is_Add: # checking is_Add just in case...
@@ -366,14 +372,17 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
         return None
 
     g = sqrt_fixed((4<<prec)//3, prec)
-    A = {}
+    # This matrix should be used to test whether precision is exhausted, but
+    # this implementation doesn't do that! So we can just comment it out.
+    #A = {}
     B = {}
     H = {}
     # Initialization
     # step 1
     for i in xrange(1, n+1):
         for j in xrange(1, n+1):
-            A[i,j] = B[i,j] = (i==j) << prec
+            #A[i,j] = \
+            B[i,j] = (i==j) << prec
             H[i,j] = 0
     # step 2
     s = [None] + [0] * n
@@ -415,7 +424,7 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
             for k in xrange(1, j+1):
                 H[i,k] = H[i,k] - (t*H[j,k] >> prec)
             for k in xrange(1, n+1):
-                A[i,k] = A[i,k] - (t*A[j,k] >> prec)
+                #A[i,k] = A[i,k] - (t*A[j,k] >> prec)
                 B[k,j] = B[k,j] + (t*B[k,i] >> prec)
     # Main algorithm
     for REP in count():
@@ -431,7 +440,7 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
         # Step 2
         y[m], y[m+1] = y[m+1], y[m]
         for i in xrange(1,n+1): H[m,i], H[m+1,i] = H[m+1,i], H[m,i]
-        for i in xrange(1,n+1): A[m,i], A[m+1,i] = A[m+1,i], A[m,i]
+        #for i in xrange(1,n+1): A[m,i], A[m+1,i] = A[m+1,i], A[m,i]
         for i in xrange(1,n+1): B[i,m], B[i,m+1] = B[i,m+1], B[i,m]
         # Step 3
         if m <= n - 2:
@@ -460,7 +469,7 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
                 for k in xrange(1, j+1):
                     H[i,k] = H[i,k] - (t*H[j,k] >> prec)
                 for k in xrange(1, n+1):
-                    A[i,k] = A[i,k] - (t*A[j,k] >> prec)
+                    #A[i,k] = A[i,k] - (t*A[j,k] >> prec)
                     B[k,j] = B[k,j] + (t*B[k,i] >> prec)
         # Until a relation is found, the error typically decreases
         # slowly (e.g. a factor 1-10) with each step TODO: we could

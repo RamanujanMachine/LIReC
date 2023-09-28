@@ -10,7 +10,7 @@ from LIReC.jobs.config import configuration
 from LIReC.lib.pool import WorkerPool
 
 LOGGER_NAME = 'job_logger'
-MOD_PATH = 'jobs.job_%s'
+MOD_PATH = 'LIReC.jobs.job_%s'
 
 def main() -> None:
     os.makedirs(os.path.join(os.getcwd(), 'logs'), exist_ok=True)
@@ -18,7 +18,7 @@ def main() -> None:
         pid_file.writelines([str(os.getpid()), os.linesep])
     worker_pool = WorkerPool(configuration['pool_size'])
     signal.signal(signal.SIGINT, lambda sig, frame: worker_pool.stop())
-    results = worker_pool.start((MOD_PATH % name, config) for name, config in configuration['jobs_to_run'])
+    results = worker_pool.start([(MOD_PATH % name, config) for name, config in configuration['jobs_to_run']])
     fileConfig('LIReC/logging.config', defaults={'log_filename': 'main'})
 
     for module_path, timings in results:

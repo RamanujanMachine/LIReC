@@ -158,9 +158,9 @@ def compress_relation(result, consts, exponents, degree, order, verbose=False):
 
     return PolyPSLQRelation(consts, degree, order, result)
 
-def combination_is_old(consts, degree, order, other_relations):
-    return any(r for r in other_relations
-               if {c.symbol for c in r.constants} <= {c.symbol for c in consts} and r.degree <= degree and r.order <= order)
+def combination_is_old(consts, degree, order, other_relations): # if the combination is old, returns a relation "as proof". else returns None
+    return ([r for r in other_relations
+             if {c.symbol for c in r.constants} <= {c.symbol for c in consts} and r.degree <= degree and r.order <= order] + [None])[0]
 
 MIN_PRECISION_RATIO = 0.8
 MAX_PREC = 99999

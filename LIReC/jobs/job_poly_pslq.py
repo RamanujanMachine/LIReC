@@ -23,12 +23,10 @@ Configured as such:
     'PcfCanonical': 'balanced_only' filters to only PCFs of balanced degrees if set to True.
 '''
 import mpmath as mp
-from itertools import combinations, groupby, product
+from itertools import groupby, product
 from logging import getLogger
 from logging.config import fileConfig
 from os import getpid
-from sqlalchemy import or_
-from sqlalchemy.sql.expression import func
 from sympy import Symbol
 from time import time
 from traceback import format_exc
@@ -39,17 +37,10 @@ from LIReC.lib.pslq_utils import *
 
 EXECUTE_NEEDS_ARGS = True
 
-DEBUG_PRINT_CONSTANTS = True
-
 ALGORITHM_NAME = 'POLYNOMIAL_PSLQ'
 UNRELATION_NAME = 'NO_PSLQ'
 LOGGER_NAME = 'job_logger'
-MIN_PRECISION_RATIO = 0.8
-MAX_PREC = 99999
 EXTENSION_TYPES = ['PowerOf', 'Derived', 'PcfCanonical', 'Named'] # ordered by increasing priority
-BULK_TYPES = {'PcfCanonical'}
-SUPPORTED_TYPES = ['Named', 'PcfCanonical']
-DEFAULT_CONST_COUNT = 1
 
 # need to keep hold of the original db constant, but pslq_utils doesn't care for that so this is separate here
 class DualConstant(PreciseConstant):
@@ -118,12 +109,19 @@ def run_query(degree=2, order=1, min_precision=50, min_roi=2, testing_precision=
     # also don't really care about symbolic representation for the constants here, just need them to be unique
     priorities = {c[0].const_id : c[1] for c in consts if len(c) > 1}
     consts = [DualConstant.from_db(c[0]) for c in consts if len(c) > 1 and is_workable(c[0].value, testing_precision, min_roi)]
+    
+    relations = all_relations()
+    while True: # remove constants that you know are related
+        redundant = combination_is_old(consts, degree, order, relations)
+        if redundant:
+            to_remove = lowest_priority(redundant.constants, priorities)
+            consts = [c for c in consts if c.symbol != to_remove.symbol]
+        else: # found all redundant constants!
+            break
+    
     testing_consts = []
     refill = True
     relations = []
-    
-    # TODO query existing relations and use them to remove constants that have been connected already
-    
     getLogger(LOGGER_NAME).info(f'QUERY BEGIN - {len(consts)} constants, {bulk} constants at a time')
     getLogger(LOGGER_NAME).info(f'QUERY BEGIN - all constants have {min_precision} precision or more')
     getLogger(LOGGER_NAME).info(f'QUERY BEGIN - searching for relations with degree {degree} and order {order}')
@@ -134,7 +132,7 @@ def run_query(degree=2, order=1, min_precision=50, min_roi=2, testing_precision=
             testing_consts += consts[:bulk]
             consts = consts[bulk:]
             refill = False
-        getLogger(LOGGER_NAME).debug(f'testing {len(testing_consts)} constants')
+        getLogger(LOGGER_NAME).debug(f'testing {len(testing_consts)} constants. {len(consts)} remain in reserve')
         new_rels = check_consts(testing_consts, None, degree, order, testing_precision, min_roi)
         if new_rels:
             getLogger(LOGGER_NAME).info(f'found {len(new_rels)} relations:')

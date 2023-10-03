@@ -337,18 +337,15 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
     if prec < 53:
         raise ValueError("prec cannot be less than 53")
 
-    if verbose and prec // max(2,n) < 5:
+    if verbose and prec // n < 5:
         print("Warning: precision for PSLQ may be too low")
 
-    target = int(prec * 0.75)
-
     if tol is None:
-        tol = ctx.mpf(2)**(-target)
+        tol = ctx.mpf(2)**-(prec*3//4)
     else:
         tol = ctx.convert(tol)
 
-    extra = 60
-    prec += extra
+    prec += 60
 
     if verbose:
         print("PSLQ using prec %i and tol %s" % (prec, ctx.nstr(tol)))
@@ -427,6 +424,7 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
                 #A[i,k] = A[i,k] - (t*A[j,k] >> prec)
                 B[k,j] = B[k,j] + (t*B[k,i] >> prec)
     # Main algorithm
+    global_best_err = mp.inf
     for REP in count():
         # Step 1
         m = -1
@@ -477,7 +475,7 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
         # large drop (several orders of magnitude), that indicates a
         # "high quality" relation was detected. Reporting this to
         # the user somehow might be useful.
-        best_err = mp.inf if mp.isinf(maxcoeff) else maxcoeff<<prec
+        best_err = mp.inf
         for i in xrange(1, n+1):
             err = abs(y[i])
             # Maybe we are done?
@@ -491,6 +489,13 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
                             (REP, -1 if mp.isinf(maxsteps) else maxsteps, ctx.nstr(err / ctx.mpf(2)**prec, 1)))
                     return vec
             best_err = min(err, best_err)
+        # test error: if much bigger than global_best_err, trigger failsafe
+        if best_err < global_best_err:
+            global_best_err = best_err
+        elif best_err * best_err > (global_best_err << prec):
+            if verbose:
+                print("BAD ERROR FAILSAFE TRIGGERED")
+            break
         # Calculate a lower bound for the norm. We could do this
         # more exactly (using the Euclidean norm) but there is probably
         # no practical benefit.

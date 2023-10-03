@@ -381,11 +381,12 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
         B[i][i] = temp
     # step 2
     s = [0]*(n+1)
+    for k in xrange(n, 0, -1):
+        if k < n:
+            s[k] = s[k+1]
+        s[k] = s[k] + ((x[k]*x[k]) >> prec)
     for k in xrange(1, n+1):
-        t = 0
-        for j in xrange(k, n+1):
-            t += ((x[j]*x[j]) >> prec)
-        s[k] = sqrt_fixed(t, prec)
+        s[k] = sqrt_fixed(s[k], prec)
     t = s[1]
     y = x[:]
     for k in xrange(1, n+1):

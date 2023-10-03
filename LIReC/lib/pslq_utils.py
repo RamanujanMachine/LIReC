@@ -371,22 +371,20 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
     g = sqrt_fixed((4<<prec)//3, prec)
     # This matrix should be used to test whether precision is exhausted, but
     # this implementation doesn't do that! So we can just comment it out.
-    #A = {}
-    B = {}
-    H = {}
+    #A = [[0]*(n+1) for i in xrange(n+1)]
+    B = [[0]*(n+1) for i in xrange(n+1)] # redundant cells to allow 1-based indexing
+    H = [[0]*(n+1) for i in xrange(n+1)]
     # Initialization
     # step 1
+    temp = 1 << prec
     for i in xrange(1, n+1):
-        for j in xrange(1, n+1):
-            #A[i,j] = \
-            B[i,j] = (i==j) << prec
-            H[i,j] = 0
+        B[i][i] = temp
     # step 2
-    s = [None] + [0] * n
+    s = [0]*(n+1)
     for k in xrange(1, n+1):
         t = 0
         for j in xrange(k, n+1):
-            t += (x[j]**2 >> prec)
+            t += ((x[j]*x[j]) >> prec)
         s[k] = sqrt_fixed(t, prec)
     t = s[1]
     y = x[:]
@@ -395,80 +393,73 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
         s[k] = (s[k] << prec) // t
     # step 3
     for i in xrange(1, n+1):
-        for j in xrange(i+1, n):
-            H[i,j] = 0
-        if i <= n-1:
-            if s[i]:
-                H[i,i] = (s[i+1] << prec) // s[i]
-            else:
-                H[i,i] = 0
-        for j in range(1, i):
+        if i <= n-1 and s[i]:
+            H[i][i] = (s[i+1] << prec) // s[i]
+        
+        for j in xrange(1, i):
             sjj1 = s[j]*s[j+1]
             if sjj1:
-                H[i,j] = ((-y[i]*y[j])<<prec)//sjj1
-            else:
-                H[i,j] = 0
+                H[i][j] = ((-y[i]*y[j]) << prec) // sjj1
     # step 4
     for i in xrange(2, n+1):
         for j in xrange(i-1, 0, -1):
-            #t = floor(H[i,j]/H[j,j] + 0.5)
-            if H[j,j]:
-                t = round_fixed((H[i,j] << prec)//H[j,j], prec)
+            #t = floor(H[i][j]/H[j][j] + 0.5)
+            if H[j][j]:
+                t = round_fixed((H[i][j] << prec)//H[j][j], prec)
             else:
                 #t = 0
                 continue
             y[j] = y[j] + (t*y[i] >> prec)
             for k in xrange(1, j+1):
-                H[i,k] = H[i,k] - (t*H[j,k] >> prec)
+                H[i][k] = H[i][k] - (t*H[j][k] >> prec)
             for k in xrange(1, n+1):
-                #A[i,k] = A[i,k] - (t*A[j,k] >> prec)
-                B[k,j] = B[k,j] + (t*B[k,i] >> prec)
+                #A[i][k] = A[i][k] - (t*A[j][k] >> prec)
+                B[k][j] = B[k][j] + (t*B[k][i] >> prec)
     # Main algorithm
     global_best_err = mp.inf
     for REP in count():
         # Step 1
         m = -1
         szmax = -1
-        for i in range(1, n):
-            h = H[i,i]
-            sz = (g**i * abs(h)) >> (prec*(i-1))
+        for i in xrange(1, n):
+            sz = (g**i * abs(H[i][i])) >> (prec*(i-1))
             if sz > szmax:
                 m = i
                 szmax = sz
         # Step 2
         y[m], y[m+1] = y[m+1], y[m]
-        for i in xrange(1,n+1): H[m,i], H[m+1,i] = H[m+1,i], H[m,i]
-        #for i in xrange(1,n+1): A[m,i], A[m+1,i] = A[m+1,i], A[m,i]
-        for i in xrange(1,n+1): B[i,m], B[i,m+1] = B[i,m+1], B[i,m]
+        for i in xrange(1,n+1): H[m][i], H[m+1][i] = H[m+1][i], H[m][i]
+        #for i in xrange(1,n+1): A[m][i], A[m+1][i] = A[m+1][i], A[m][i]
+        for i in xrange(1,n+1): B[i][m], B[i][m+1] = B[i][m+1], B[i][m]
         # Step 3
         if m <= n - 2:
-            t0 = sqrt_fixed((H[m,m]**2 + H[m,m+1]**2)>>prec, prec)
+            t0 = sqrt_fixed((H[m][m]*H[m][m] + H[m][m+1]*H[m][m+1])>>prec, prec)
             # A zero element probably indicates that the precision has
             # been exhausted. XXX: this could be spurious, due to
             # using fixed-point arithmetic
             if not t0:
                 break
-            t1 = (H[m,m] << prec) // t0
-            t2 = (H[m,m+1] << prec) // t0
+            t1 = (H[m][m] << prec) // t0
+            t2 = (H[m][m+1] << prec) // t0
             for i in xrange(m, n+1):
-                t3 = H[i,m]
-                t4 = H[i,m+1]
-                H[i,m] = (t1*t3+t2*t4) >> prec
-                H[i,m+1] = (-t2*t3+t1*t4) >> prec
+                t3 = H[i][m]
+                t4 = H[i][m+1]
+                H[i][m] = (t1*t3+t2*t4) >> prec
+                H[i][m+1] = (-t2*t3+t1*t4) >> prec
         # Step 4
         for i in xrange(m+1, n+1):
             for j in xrange(min(i-1, m+1), 0, -1):
                 try:
-                    t = round_fixed((H[i,j] << prec)//H[j,j], prec)
+                    t = round_fixed((H[i][j] << prec)//H[j][j], prec)
                 # Precision probably exhausted
                 except ZeroDivisionError:
                     break
                 y[j] = y[j] + ((t*y[i]) >> prec)
                 for k in xrange(1, j+1):
-                    H[i,k] = H[i,k] - (t*H[j,k] >> prec)
+                    H[i][k] = H[i][k] - (t*H[j][k] >> prec)
                 for k in xrange(1, n+1):
-                    #A[i,k] = A[i,k] - (t*A[j,k] >> prec)
-                    B[k,j] = B[k,j] + (t*B[k,i] >> prec)
+                    #A[i][k] = A[i][k] - (t*A[j][k] >> prec)
+                    B[k][j] = B[k][j] + (t*B[k][i] >> prec)
         # Until a relation is found, the error typically decreases
         # slowly (e.g. a factor 1-10) with each step TODO: we could
         # compare err from two successive iterations. If there is a
@@ -481,8 +472,8 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
             # Maybe we are done?
             if err < tol:
                 # We are done if the coefficients are acceptable
-                vec = [int(round_fixed(B[j,i], prec) >> prec) for j in \
-                range(1,n+1)]
+                vec = [int(round_fixed(B[j][i], prec) >> prec) for j in \
+                xrange(1,n+1)]
                 if max(abs(v) for v in vec) < maxcoeff:
                     if verbose:
                         print("FOUND relation at iter %i/%i, error: %s" % \
@@ -499,10 +490,9 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
         # Calculate a lower bound for the norm. We could do this
         # more exactly (using the Euclidean norm) but there is probably
         # no practical benefit.
-        recnorm = max(abs(h) for h in H.values())
+        recnorm = max(abs(h) for hh in H for h in hh)
         if recnorm:
-            norm = ((1 << (2*prec)) // recnorm) >> prec
-            norm //= 100
+            norm = (((1 << (2*prec)) // recnorm) >> prec) // 100
         else:
             norm = ctx.inf
         if verbose:

@@ -4,7 +4,7 @@ from sqlalchemy import ARRAY, CHAR, Column, DateTime, Float, ForeignKey, Integer
 from sqlalchemy.sql.sqltypes import BigInteger
 from sqlalchemy.types import Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, deferred
 from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
@@ -56,7 +56,7 @@ class PcfCanonicalConstant(Base):
     original_b = Column(ARRAY(Numeric()))
     P = Column(ARRAY(Numeric()), nullable=False)
     Q = Column(ARRAY(Numeric()), nullable=False)
-    last_matrix = Column(Text())
+    last_matrix = deferred(Column(Text())) # don't always need to load this!
     depth = Column(Integer)
     convergence = Column(Integer)
     

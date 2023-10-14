@@ -1,5 +1,6 @@
 from __future__ import annotations
 from enum import Enum
+from functools import reduce
 import gmpy2
 from gmpy2 import mpz, xmpz, mpq
 import mpmath as mp
@@ -7,7 +8,7 @@ from sympy import Poly, gcd as sgcd, cancel
 from sympy.abc import n
 from time import time
 from typing import List, Tuple, Callable
-from LIReC.lib.pslq_utils import poly_check, PreciseConstant
+from LIReC.lib.pslq_utils import poly_check, PreciseConstant, MIN_PSLQ_DPS
 CanonicalForm = Tuple[List[int], List[int]]
 
 def _poly_eval(poly: List, n):
@@ -76,7 +77,7 @@ class ContinuedFraction:
         self.depth = depth
         self.true_value = None
         self.eval_defaults = {
-            'depth': 8192, # at this depth, calculation of one PCF is expected to take about 3 seconds, depending on your machine
+            'depth': 2 ** 13, # at this depth, calculation of one PCF is expected to take about 3 seconds, depending on your machine
             'precision': 50,
             'timeout_sec': 0,
             'timeout_check_freq': 1024,
@@ -168,7 +169,7 @@ class ContinuedFraction:
             if not kwargs['no_exception']:
                 raise ex
         
-        rational, _ = poly_check([PreciseConstant(value, prec)], 1, 1, test_prec = int(prec))
+        rational, _ = poly_check([PreciseConstant(value, prec)], 1, 1, test_prec = MIN_PSLQ_DPS)
         if rational:
             self.true_value = mpq(rational[0], -rational[1])
         

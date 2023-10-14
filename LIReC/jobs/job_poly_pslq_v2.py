@@ -89,7 +89,7 @@ def all_relations() -> List[PolyPSLQRelation]:
     rels = {r.relation_id:r for r in db.session.query(models.Relation)}
     return [from_db_format(rels[relation_id], [consts[p[0]] for p in g]) for relation_id, g in groupby(db.session.query(models.constant_in_relation_table), lambda p:p[1])]
 
-def run_query(degree=2, order=1, min_precision=50, min_roi=2, testing_precision=15, bulk=10, filters=None):
+def run_query(degree=2, order=1, min_precision=50, min_roi=2, testing_precision=None, bulk=10, filters=None):
     fileConfig('LIReC/logging.config', defaults={'log_filename': 'poly_pslq_main'})
     testing_precision = testing_precision if testing_precision else min_precision
     consts = [[c] for c in db.session.query(models.Constant).filter(models.Constant.precision >= min_precision).order_by(models.Constant.const_id)]
@@ -152,7 +152,7 @@ def run_query(degree=2, order=1, min_precision=50, min_roi=2, testing_precision=
     return relations
     # TODO investigate randomness! on catalan+22 pcfs, sometimes finds 57 relations, sometimes finds 59
 
-def execute_job(query_data, degree=2, order=1, min_precision=50, min_roi=2, testing_precision=15, bulk=10, filters=None, manual=False):
+def execute_job(query_data, degree=2, order=1, min_precision=50, min_roi=2, testing_precision=None, bulk=10, filters=None, manual=False):
     # actually faster to manually query everything at once!
     try:
         fileConfig('LIReC/logging.config', defaults={'log_filename': 'analyze_pcfs' if manual else f'poly_pslq_subjob_{getpid()}'})

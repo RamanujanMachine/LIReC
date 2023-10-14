@@ -115,14 +115,14 @@ class Universal:
         const.P = [int(coef) for coef in top.all_coeffs()]
         const.Q = [int(coef) for coef in bot.all_coeffs()]
         if pcf.depth:
-            getcontext().prec = min(pcf.precision + 10, 16000)
-            const.base.value = Decimal(str(pcf.value))
-            const.base.precision = pcf.precision
+            prec = min(int(pcf.precision) + 10, 16000)
+            const.base.precision = getcontext().prec = mp.mp.dps = prec
+            const.base.value = Decimal(str(ContinuedFraction.Util.as_mpf(pcf.true_value if pcf.true_value != None else pcf.value)))
             const.depth = pcf.depth
             if not minimalist: # last_matrix is a huge thing...
                 mat = [x for row in pcf.mat for x in row]
                 const.last_matrix = reduce(lambda a, b: a + ',' + str(b), mat[1:], str(mat[0]))
-                const.convergence = pcf.convergence
+                const.convergence = pcf.convergence.value
         return const
     
     @staticmethod

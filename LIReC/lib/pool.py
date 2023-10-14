@@ -17,7 +17,6 @@ from logging.config import fileConfig
 from math import inf, ceil
 from multiprocessing import Pool, Manager, Value
 from multiprocessing.managers import ValueProxy
-from numpy import arange
 from os import cpu_count
 from queue import Queue
 from time import sleep, time
@@ -159,6 +158,17 @@ class WorkerPool:
 
     @staticmethod
     def split_parameters(parameters, pool_size):
+        from fractions import Fraction
+        def arange(start, end=None, step=1):
+            if end == None:
+                end = start
+                start = 0
+            while start < end:
+                yield start
+                start += step
+        if isinstance(parameters, dict):
+            split = {k:(WorkerPool.split_parameters(parameters[k], pool_size) if isinstance(parameters[k], list) else parameters[k]) for k in parameters}
+            return [{k:split[k][i] if isinstance(split[k], list) else split[k] for k in split} for i in range(pool_size)]
         l = max(len(parameters), 1)
-        chunk_size = l / pool_size
+        chunk_size = Fraction(l, pool_size)
         return [parameters[ceil(i):ceil(i+chunk_size)] for i in arange(0, l, chunk_size)]

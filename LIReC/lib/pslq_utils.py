@@ -105,7 +105,7 @@ def poly_check(consts, degree = None, order = None, exponents = None, test_prec 
             tol = None
             if true_min < MIN_PSLQ_DPS: # otherwise let pslq automatically set tol
                 tol_offset = mp.floor(mp.log10(consts[precs.index(true_min)].value)) - max(mp.floor(mp.log10(x)) for x in poly)
-                tol = mp.mpf(10)**(tol_offset - min(11,true_min))
+                tol = mp.mpf(10)**(tol_offset - min(11,int(true_min)))
             with mp.workdps(test_prec): # intentionally low-resolution to quickly try something basic...
                 res = [1 if mp.mp.to_fixed(x, mp.mp.prec) == 0 else 0 for x in poly]
                 if any(res):

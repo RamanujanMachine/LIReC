@@ -34,6 +34,7 @@ from traceback import format_exc
 from LIReC.db import models
 from LIReC.db.access import db
 from LIReC.lib.pslq_utils import *
+from LIReC.jobs.job_poly_pslq_v2 import DualConstant, to_db_format # just gonna borrow this
 
 EXECUTE_NEEDS_ARGS = True
 DEBUG_PRINT_CONSTANTS = False
@@ -71,13 +72,13 @@ def get_const_class(const_type):
         raise ValueError(f'Unknown constant type {const_type}')
     return models.__dict__[name]
 
-def get_consts(const_type, db, filters):
+def get_consts(const_type, filters):
     if const_type == 'Named': # Constant first intentionally! don't need extra details, but want to filter still
-        return db.session.query(models.Constant).join(models.NamedConstant).order_by(models.NamedConstant.const_id).filter(*get_filters(filters, const_type))    
+        return [DualConstant.from_db(c) for c in db.session.query(models.Constant).join(models.NamedConstant).order_by(models.NamedConstant.const_id).filter(*get_filters(filters, const_type))]
 
 def relation_is_new(consts, degree, order, other_relations):
     return not any(r for r in other_relations
-                   if {c.const_id for c in r.constants} <= {c.const_id for c in consts} and r.details[0] <= degree and r.details[1] <= order)
+                   if {c.const_id for c in r.constants} <= {c.orig.const_id for c in consts} and r.details[0] <= degree and r.details[1] <= order)
 
 def run_query(filters=None, degree=None, order=None, bulk=None):
     fileConfig('LIReC/logging.config', defaults={'log_filename': 'pslq_const_manager'})
@@ -93,7 +94,7 @@ def run_query(filters=None, degree=None, order=None, bulk=None):
     # but on 1000 CFs it only takes 1 second, which imo is worth it since
     # that allows us more variety in testing the CFs...
     # TODO what to do if results is unintentionally empty?
-    getLogger(LOGGER_NAME).info(f'size of batch is {len(results) * bulk}')
+    getLogger(LOGGER_NAME).info(f'size of batch is {sum(len(results[k]) for k in results)}')
     return results
 
 def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, manual=False):
@@ -122,7 +123,7 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
             getLogger(LOGGER_NAME).info(f'redundant degree detected! reducing to {degree}')
         
         all_consts = db.session.query(models.Constant).all() # need to "internally refresh" the constants so they get committed right
-        subsets = [combinations([c for c in all_consts if c.const_id in query_data[const_type]] if const_type in query_data else get_consts(const_type, db, {**filters, 'global':global_filters}), filters[const_type]['count']) for const_type in filters]
+        subsets = [combinations([DualConstant.from_db(c) for c in all_consts if c.const_id in query_data[const_type]] if const_type in query_data else get_consts(const_type, {**filters, 'global':global_filters}), filters[const_type]['count']) for const_type in filters]
         exponents = get_exponents(degree, order, total_consts)
         
         old_relations = db.session.query(models.Relation).all()
@@ -135,15 +136,16 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
             if relation_is_new(consts, degree, order, old_relations):
                 if DEBUG_PRINT_CONSTANTS:
                     getLogger(LOGGER_NAME).debug(f'checking consts: {[c.const_id for c in consts]}')
-                new_relations = check_consts(consts, exponents, degree, order)
+                new_relations = [to_db_format(r) for r in check_consts(consts, exponents, degree, order)]
                 if new_relations:
-                    getLogger(LOGGER_NAME).info(f'Found relation(s) on constants {[c.const_id for c in consts]}!')
+                    getLogger(LOGGER_NAME).info(f'Found relation(s) on constants {[c.orig.const_id for c in consts]}!')
                     try_count = 1
                     while try_count < 3:
                         try:
                             db.session.add_all(new_relations)
                             db.session.commit()
                             old_relations += new_relations
+                            break
                         except:
                             db.session.rollback()
                             #db.session.close()
@@ -163,7 +165,7 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
         
         getLogger(LOGGER_NAME).info('Commit done')
         
-        return len(new_relations)
+        return len(old_relations) - orig_size
     except:
         getLogger(LOGGER_NAME).error(f'Exception in execute job: {format_exc()}')
         # not returning anything so summarize_results can see the error

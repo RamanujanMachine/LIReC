@@ -2,14 +2,13 @@ from functools import reduce
 from operator import add
 from sympy import Poly, Symbol
 import sys
-from LIReC.db.access import LIReC_DB
+from LIReC.db.access import db
 from LIReC.db.models import *
-from LIReC.jobs.job_poly_pslq import get_exponents
+from LIReC.lib.pslq_utils import get_exponents
 
 def main():
     keep_going = len(sys.argv) > 1
     print(f'printing relations one at a time in descending order of precision{"" if keep_going else ", press enter to print the next"}')
-    db = LIReC_DB()
     n = Symbol('n')
     rels = db.session.query(Relation).order_by(Relation.precision.desc()).all()
     nameds = db.session.query(NamedConstant).all()
@@ -39,7 +38,7 @@ def main():
                 else:
                     print(f'constant with uuid {const.const_id} has no known extension')
             toprint += f', precision: {const.precision}, value: {str(const.value)[:50]}...' + '\r\n'
-        print(toprint + '}')
+        print(toprint + '} (uuids: ' + f'{[str(c.const_id) for c in rel.constants]})')
         if not keep_going:
             input()
 

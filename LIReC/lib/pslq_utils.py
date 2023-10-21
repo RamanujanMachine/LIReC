@@ -179,7 +179,7 @@ def check_subrelations(relation: PolyPSLQRelation, true_prec, test_prec=15, min_
                 if true_prec2 >= MIN_PRECISION_RATIO * min(c.precision for c in subrel.constants):
                     true_prec2 = min(true_prec2, MAX_PREC)
                     subrelations += [subrel]
-    return subrelations if subrelations else [] if true_prec < MIN_PRECISION_RATIO * test_prec else [relation]
+    return subrelations if subrelations else [] if true_prec < MIN_PRECISION_RATIO * min(c.precision for c in relation.constants) else [relation]
 
 def check_consts(consts: List[PreciseConstant], exponents=None, degree=2, order=1, test_prec=15, min_roi=2, verbose=False):
     exponents = exponents if exponents else get_exponents(degree, order, len(consts))

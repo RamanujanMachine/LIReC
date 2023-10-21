@@ -2,7 +2,7 @@ from __future__ import annotations
 from enum import Enum
 from functools import reduce
 import gmpy2
-from gmpy2 import mpz, xmpz, mpq
+from gmpy2 import mpz, mpfr, xmpz, mpq
 import mpmath as mp
 from sympy import Poly, gcd as sgcd, cancel
 from sympy.abc import n
@@ -27,7 +27,7 @@ REDUCE_JUMP = 128
 LOG_CALC_JUMP = 7
 LOG_REDUCE_JUMP = 6
 FR_THRESHOLD = 0.1
-MAX_PREC = mpz(99999)
+MAX_PREC = mpfr(99999)
     
 class IllegalPCFException(Exception):
     pass

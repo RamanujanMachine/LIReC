@@ -669,7 +669,7 @@ class Constants:
         z score for 97.5 percentile point, commonly used alongside normal distributions.
         OEIS link: https://oeis.org/A220510
         '''
-        return mp.sqrt(2) * mp.erfinv(0.95)
+        return mp.sqrt(2) * mp.erfinv('0.95')
     
     @staticmethod
     def tau() -> mpf:

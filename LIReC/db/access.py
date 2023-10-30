@@ -174,14 +174,14 @@ class LIReC_DB:
     def parse_cf_to_lists(cf: models.PcfCanonicalConstant) -> CanonicalForm:
         return [int(coef) for coef in cf.P], [int(coef) for coef in cf.Q]
     
-    def get_canonical_forms(self) -> List[CanonicalForm]:
+    def canonical_forms(self) -> List[CanonicalForm]:
         return [LIReC_DB.parse_cf_to_lists(pcf) for pcf in self.cfs]
     
     def get_actual_pcfs(self) -> List[PCF]:
         """
         return a list of PCFs from the DB
         """
-        return [PCF.from_canonical_form(c) for c in self.get_canonical_forms()]
+        return [PCF.from_canonical_form(c) for c in self.canonical_forms()]
 
     def get_original_pcfs(self) -> List[PCF]:
         return [PCF(cf.original_a, cf.original_b) for cf in self.cfs if cf.original_a and cf.original_b]

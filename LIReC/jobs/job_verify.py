@@ -1,16 +1,18 @@
+from decimal import getcontext
 from logging import getLogger
 from logging.config import fileConfig
 from traceback import format_exc
-from LIReC.db import models, access
+from LIReC.db import models
+from LIReC.db.access import db
 from LIReC.lib.pslq_utils import poly_verify
 
 LOGGER_NAME = 'job_logger'
 PRECISION_TOLERANCE = 1.1
 
 def execute_job():
+    getcontext().prec = 16000
     try:
         fileConfig('logging.config', defaults={'log_filename': 'verify'})
-        db = access.LIReC_DB()
         rels = db.session.query(models.Relation).all()
         
         # way faster to query in bulk and filter locally than to query relations individually!
@@ -25,7 +27,6 @@ def execute_job():
             else: # too bad! don't over-report your results next time
                 db.session.delete(r)
         db.session.commit()
-        db.session.close()
     except:
         getLogger(LOGGER_NAME).error(f'Exception while verifying: {format_exc()}')
 

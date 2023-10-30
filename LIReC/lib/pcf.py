@@ -1,10 +1,12 @@
 from __future__ import annotations
+from collections import Counter
 from enum import Enum
 from functools import reduce
 import gmpy2
 from gmpy2 import mpz, mpfr, xmpz, mpq
 import mpmath as mp
-from sympy import Poly, gcd as sgcd, cancel
+from operator import floordiv
+from sympy import Poly, gcd as sgcd, cancel, re, ceiling, factorint
 from sympy.abc import n
 from time import time
 from typing import List, Tuple, Callable
@@ -59,8 +61,8 @@ class ContinuedFraction:
             # operations, but just in case one day a non-in-place operation is added...
             orig_len = len(mats)
             while len(mats) > 1 and (force or mats[-1][1] >= mats[-2][1]):
-                mat1 = mats.pop()
                 mat2 = mats.pop()
+                mat1 = mats.pop()
                 mats += [(ContinuedFraction.Util.mult(mat1[0], mat2[0]), mat1[1] + mat2[1])]
             return self._end_combine(mats, orig_len, force)
     
@@ -73,7 +75,7 @@ class ContinuedFraction:
     def __init__(self: ContinuedFraction, a: Callable[[int], Any], b: Callable[[int], Any], mat: List[int] or None = None, depth: int = 0):
         self.a_func = a
         self.b_func = b
-        self.mat = [mat[0:2], mat[2:4]] if mat else [[self.a_func(0), 1], [1, 0]]
+        self.mat = [mat[0:2], mat[2:4]] if mat else [[1, self.a_func(0)], [0, 1]]
         self.depth = depth
         self.true_value = None
         self.eval_defaults = {
@@ -86,12 +88,12 @@ class ContinuedFraction:
     
     @property
     def value(self: ContinuedFraction) -> mpq:
-        return mpq(self.mat[0][0], self.mat[0][1])
+        return mpq(self.mat[0][1], self.mat[1][1])
     
     @property
     def precision(self: ContinuedFraction) -> gmpy2.mpfr:
-        to_compare = self.true_value if self.true_value != None else mpq(self.mat[1][0], self.mat[1][1])
-        return gmpy2.floor(-gmpy2.log10(abs(self.value - to_compare))) if all([self.mat[0][1], self.mat[1][1]]) else MAX_PREC
+        to_compare = self.true_value if self.true_value != None else mpq(self.mat[0][0], self.mat[1][0])
+        return gmpy2.floor(-gmpy2.log10(abs(self.value - to_compare))) if all(self.mat[1]) else MAX_PREC
     
     def _pre_eval(self):
         pass
@@ -125,6 +127,7 @@ class ContinuedFraction:
         # P.S.: The code here is in fact similar to enumerators.FREnumerator.check_for_fr, but
         # the analysis we're doing here is both more delicate (as we allow numerically-indeterminate PCFs),
         # and also less redundant (since we also want the value of the PCF instead of just discarding it for instance)
+        self.true_value = None
         self._pre_eval()
         mp.mp.dps = 100 # temporarily, to let the precision calculation work, will probably be increased later
         kwargs = {**self.eval_defaults, **kwargs}
@@ -133,7 +136,7 @@ class ContinuedFraction:
         mats = [(self.mat, self.depth)]
         while self.depth < kwargs['depth']:
             self.depth += 1
-            mats, extra = ContinuedFraction.Util.combine(self, mats + [([[self.a_func(self.depth), self.b_func(self.depth)], [1, 0]], 1)])
+            mats, extra = ContinuedFraction.Util.combine(self, mats + [([[0, self.b_func(self.depth)], [1, self.a_func(self.depth)]], 1)])
             if extra:
                 extras_list += [extra]
             if kwargs['timeout_sec'] and self.depth % kwargs['timeout_check_freq'] == 0 and time() - start > kwargs['timeout_sec']:
@@ -154,8 +157,8 @@ class ContinuedFraction:
                 kwargs = self._end_depth(extras_list, kwargs)
                 if isinstance(kwargs, Exception):
                     #if kwargs['no_exception']:
-                    #    return ex
-                    raise ex
+                    #    return kwargs
+                    raise kwargs
         
         self.mat = ContinuedFraction.Util.combine(self, mats, True)[0][0][0]
         mp.mp.dps = max(100, self.precision)
@@ -233,66 +236,64 @@ class PCF(ContinuedFraction):
         super().__init__(lambda n: _poly_eval(self.a_coeffs, n), lambda n: _poly_eval(self.b_coeffs, n), mat, depth)
         self.eval_defaults['force_fr'] = True
 
-    def moving_canonical_form(self: PCF) -> Tuple(Poly, Poly):
-        # Should always be real roots. (TODO modify if not!)
-        roots = [r for r in self.b.all_roots() if r.is_real]
-
-        # In case b is a constant (has no roots) we still want an to have the canonical roots
-        # => (the smallest root to be in (-1,0] )
-        # If some of the roots are irrational, it makes the coefficients look ugly, so I decided not to move them.
-        # ground_roots is a dict {root:power_of_root} while real_roots is a list of all of the roots including multiplicity
-        if len(roots) == 0:
-            roots = self.a.real_roots()
-            if len(roots) == 0 or len(roots) != sum(self.a.ground_roots().values()):
-                return self.a, self.b
-
-        largest_root = max(roots)
-        # We want the largest root to be in (-1,0].
-        return self.b.compose(Poly(n + largest_root)), self.a.compose(Poly(n + largest_root))
-
-    def inflating_canonical_form(self: PCF) -> Tuple(Poly, Poly):
-        top = self.b
+    def semi_canonical_form(self: PCF) -> Tuple(Poly, Poly):
+        top = self.b # inflate everything by 1/an, so partial denominators become constant 1
         bot = self.a * self.a.compose(Poly(n - 1))
         gcd = sgcd(top, bot)
         return Poly(cancel(top / gcd), n), Poly(cancel(bot / gcd), n)
 
-    def get_canonical_form(self: PCF) -> Tuple(Poly, Poly):
-        top, bot = self.inflating_canonical_form()
-        return PCF(bot.all_coeffs(), top.all_coeffs()).moving_canonical_form()
+    def canonical_form(self: PCF) -> Tuple(Poly, Poly):
+        top, bot = self.semi_canonical_form() # start with the semi-canonical form (partial denominator series is constant 1)
+        
+        # the largest real part of the roots of top should be in (-1,0].
+        # If top is constant, use the roots of bot instead
+        roots = [ceiling(re(r)) for r in top.all_roots()] or [ceiling(re(r)) for r in bot.all_roots()]
 
-    def get_canonical_form_string(self: PCF) -> str:
-        a, b = self.get_canonical_form()
-        return str(b / a)
+        # If both are constants, just leave them as is
+        if not roots:
+            return top, bot
+
+        largest_root = max(roots)
+        return top.compose(Poly(n + largest_root)), bot.compose(Poly(n + largest_root))
+
+    def canonical_form_string(self: PCF) -> str:
+        top, bot = self.canonical_form()
+        return str(top / bot)
 
     def __str__(self: PCF) -> str:
-        return f'a: {self.a.all_coeffs()}\t|\tb: {self.b.all_coeffs()}'
+        return f'PCF[{self.a.expr}, {self.b.expr}]'
 
     def is_inflation(self: PCF) -> bool:
         return sgcd(self.b, self.a * self.a.compose(Poly(n - 1))) != 1
 
     def deflate(self: PCF) -> None:
-        deflated: bool = True
-        while deflated: # keep going so long as something cancels out
-            deflated = False
-            a_factors = [factor_tuple[0] for factor_tuple in self.a.factor_list()[1]]
-            b_factors = [factor_tuple[0] for factor_tuple in self.b.factor_list()[1]]
-            for factor in a_factors:
-                if factor in b_factors and factor.compose(Poly(n-1)) in b_factors:
-                    self.a = Poly(cancel(self.a / factor), n) # n must stay in the constructor because these polynomials can end up being constant!
-                    self.b = Poly(cancel(self.b / (factor * factor.compose(Poly(n - 1)))), n)
-                    deflated = True
+        def better_factor_list(p: Poly):
+            factors = p.factor_list()
+            return Counter(factorint(factors[0])), Counter({k:v for k,v in factors[1]})
+        
+        a_scalars, a_subpolys = better_factor_list(self.a)
+        b_scalars, b_subpolys = better_factor_list(self.b)
+        # first reduce common scalars
+        common = {k:min(a_scalars[k],b_scalars[k]//2) for k in a_scalars}
+        self.a = reduce(floordiv, [k ** common[k] for k in common], self.a)
+        self.b = reduce(floordiv, [k ** (2 * common[k]) for k in common], self.b)
+        # then reduce polynomial factors
+        common = {k:min(a_subpolys[k],b_subpolys[k],b_subpolys[k.compose(Poly(n - 1))]) for k in a_subpolys}
+        self.a = reduce(floordiv, [k ** common[k] for k in common], self.a)
+        self.b = reduce(floordiv, [(k * k.compose(Poly(n - 1))) ** common[k] for k in common], self.b)
     
     @staticmethod
     def from_canonical_form(canonical_form: CanonicalForm) -> PCF:
         '''
-        Receive the canonical form of a pcf (an := 1 ; bn := bn / (an*a(n+1)))
+        Receive the canonical form of a pcf (an := 1 ; bn := top/bot)
         and return a pcf of this canonical form.
         Notice there may be many pcfs that fit the same canonical form, this returns just one of them.
         TODO: add link to the doc which explains this
         '''
-        a = Poly(canonical_form[1], n).compose(Poly(n + 1))
-        b = Poly(canonical_form[0], n) * a
-        return PCF(a.all_coeffs(), b.all_coeffs())
+        top, bot = canonical_form
+        a = Poly(bot, n).compose(Poly(n + 1)) # inflate everything by bot(n+1)
+        b = Poly(top, n) * a # then what remains of top/bot is top/bot * bot*bot(n+1), or just top*bot(n+1)
+        return PCF(a, b) # the end result is PCF[bot(n+1),top*bot(n+1)], from here deflate and we're done!
     
     def check_convergence(self: ContinuedFraction, fr_list) -> PCF.Convergence:
         if self.true_value != None:

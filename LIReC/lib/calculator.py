@@ -111,7 +111,7 @@ class Universal:
     def fill_pcf_canonical(const: PcfCanonicalConstant, pcf: PCF, minimalist=False):
         const.original_a = [int(coef) for coef in pcf.a.all_coeffs()]
         const.original_b = [int(coef) for coef in pcf.b.all_coeffs()]
-        top, bot = pcf.get_canonical_form()
+        top, bot = pcf.canonical_form()
         const.P = [int(coef) for coef in top.all_coeffs()]
         const.Q = [int(coef) for coef in bot.all_coeffs()]
         if pcf.depth:

@@ -12,7 +12,7 @@ class PreciseConstant:
     symbol: str
     
     def __init__(self, value, precision, symbol=None):
-        self.precision = precision
+        self.precision = int(precision)
         with mp.workdps(self.precision):
             self.value = mp.mpf(str(value))
         self.symbol = symbol

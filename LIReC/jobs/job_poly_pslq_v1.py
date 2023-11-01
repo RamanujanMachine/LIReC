@@ -135,7 +135,7 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
             consts = [c for t in consts for c in t] # need to flatten...
             if relation_is_new(consts, degree, order, old_relations):
                 if DEBUG_PRINT_CONSTANTS:
-                    getLogger(LOGGER_NAME).debug(f'checking consts: {[c.const_id for c in consts]}')
+                    getLogger(LOGGER_NAME).debug(f'checking consts: {[c.orig.const_id for c in consts]}')
                 new_relations = [to_db_format(r) for r in check_consts(consts, exponents, degree, order)]
                 if new_relations:
                     getLogger(LOGGER_NAME).info(f'Found relation(s) on constants {[c.orig.const_id for c in consts]}!')

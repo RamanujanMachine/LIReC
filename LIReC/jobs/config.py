@@ -4,13 +4,11 @@ configuration = {
         ('poly_pslq_v1', {
             'args': { 'degree': 2, 'order': 1, 'bulk': 1000, 'filters': {
                 'global': { 'min_precision': 50 },
-                'PcfCanonical': { 'count': 2, 'balanced_only': True },
+                'PcfCanonical': { 'count': 2, 'balanced_only': False },
                 'Named': { 'count': 2 }
                 }
             },
-            'run_async': True,
-            'cooldown': 30,
-            'no_work_timeout': 60
+            'run_async': True
         },
         #'poly_pslq_v2', {
         #    'args': {

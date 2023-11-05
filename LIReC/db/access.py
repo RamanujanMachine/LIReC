@@ -222,7 +222,7 @@ class LIReC_DB:
                 cond_print(verbose, f'Notice: isolating when order > 1 can give weird results.')
         
         # step 1 - try to PSLQ the numbers alone
-        res = check_consts(numbers, degree=degree, order=order)
+        res = check_consts(numbers, None, degree, order, min_prec, verbose=verbose)
         if res:
             cond_print(verbose, 'Found relation(s) between the given numbers without using the named constants!')
             return res
@@ -246,7 +246,7 @@ class LIReC_DB:
         cond_print(verbose, 'Query done. Finding relations...')
         
         min_prec = min(v.precision for v in numbers)
-        res = check_consts(numbers, degree=degree, order=order)
+        res = check_consts(numbers, None, degree, order, min_prec, verbose=verbose)
         if isolate and named:
             for r in res:
                 r.isolate = f'({named[0]})'

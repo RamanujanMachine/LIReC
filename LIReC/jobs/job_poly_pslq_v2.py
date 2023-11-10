@@ -165,7 +165,7 @@ def execute_job(query_data, degree=2, order=1, min_precision=50, min_roi=2, test
         for i, (r1, r2) in enumerate(product(query_data, relations)):
             dummy_rel = PolyPSLQRelation(r1.constants + [c for c in r2.constants if c.symbol not in [c.symbol for c in r1.constants]],
                                          max(r1.degree, r2.degree), max(r1.order, r2.order), []) # coeffs don't matter!
-            new_rels = [r for r in check_subrelations(dummy_rel, min(r1.precision, r2.precision), testing_precision, min_roi, relations + new_relations) if r.coeffs]
+            new_rels = [r for r in check_subrelations(dummy_rel, testing_precision, min_roi, relations + new_relations) if r.coeffs]
             if new_rels:
                 getLogger(LOGGER_NAME).info(f'found {len(new_rels)} relations:')
                 for r in new_rels:

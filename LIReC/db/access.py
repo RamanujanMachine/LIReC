@@ -186,7 +186,7 @@ class LIReC_DB:
     def get_original_pcfs(self) -> List[PCF]:
         return [PCF(cf.original_a, cf.original_b) for cf in self.cfs if cf.original_a and cf.original_b]
 
-    def identify(self, values, degree=2, order=1, min_prec=None, max_prec=None, isolate=False, wide_search=False, verbose=False):
+    def identify(self, values, degree=2, order=1, min_prec=None, max_prec=None, min_roi=2, isolate=False, wide_search=False, verbose=False):
         if not values:
             return []
         numbers, named = [], []
@@ -206,23 +206,24 @@ class LIReC_DB:
                         named += [as_expr]
         
         if not min_prec:
-            min_prec = min([MIN_PSLQ_DPS] + [v.precision for v in numbers])
+            min_prec = min(v.precision for v in numbers)
             cond_print(verbose, f'Notice: No minimal precision given, assuming {min_prec} accurate decimal digits')
         if min_prec < MIN_PSLQ_DPS: # too low for PSLQ to work in the usual way!
             cond_print(verbose, 'Notice: Precision too low. Switching to manual tolerance mode. Might get too many results.')
         max_prec = max_prec if max_prec else min_prec * 2
         
         if isolate:
-            if not named:
-                cond_print(verbose, "Warning: no named constants given! Don't know what to isolate for!")
-                isolate = False
-            elif len(named) > 1:
-                cond_print(verbose, f'Notice: More than one named constant (or expression involving named constants) was given! Will isolate for {named[0]}.')
+            if not isinstance(isolate, int):
+                if not named:
+                    cond_print(verbose, "Warning: no named constants given! Don't know what to isolate for!")
+                    isolate = False
+                elif len(named) > 1:
+                    cond_print(verbose, f'Notice: More than one named constant (or expression involving named constants) was given! Will isolate for {named[0]}.')
             if order > 1:
                 cond_print(verbose, f'Notice: isolating when order > 1 can give weird results.')
         
         # step 1 - try to PSLQ the numbers alone
-        res = check_consts(numbers, None, degree, order, min_prec, verbose=verbose)
+        res = check_consts(numbers, None, degree, order, min_prec, min_roi, verbose)
         if res:
             cond_print(verbose, 'Found relation(s) between the given numbers without using the named constants!')
             return res
@@ -246,10 +247,11 @@ class LIReC_DB:
         cond_print(verbose, 'Query done. Finding relations...')
         
         min_prec = min(v.precision for v in numbers)
-        res = check_consts(numbers, None, degree, order, min_prec, verbose=verbose)
-        if isolate and named:
+        res = check_consts(numbers, None, degree, order, min_prec, min_roi, verbose)
+        if isinstance(isolate, int) or (isolate and named):
+            isolate = isolate if isinstance(isolate, int) else named[0].symbol
             for r in res:
-                r.isolate = f'({named[0]})'
+                r.isolate = isolate
         return res
 
 connection = DBConnection()

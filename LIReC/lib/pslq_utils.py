@@ -111,8 +111,14 @@ def poly_check(consts, degree = None, order = None, exponents = None, test_prec 
                 if any(res):
                     return res, mp.mp.dps # abort early! some numbers are too small!
                 res = pslq(poly, tol, mp.inf, mp.inf, verbose)
-            if res and test_prec >= min_roi * mp.log10(mp.norm(res, 1)): # then calculating the substance in what we just found!
-                return res, poly_eval(poly, res, [c.precision for c in consts])
+            # don't know why, but when testing PSLQ on random vectors, the expected amount of total digits in the
+            # result is approximately the same as the working precision. this is the justification for calculating roi
+            if res:
+                substance = min_roi * sum(0 if not x else len(str(abs(x))) for x in res)
+                if test_prec >= substance:
+                    return res, poly_eval(poly, res, [c.precision for c in consts])
+                elif verbose:
+                    print(f'GARBAGE RELATION FOUND. substance={substance}')
     except ValueError:
         # one of the constants has too small precision, or one constant
         # is small enough that another constant is smaller than its precision.
@@ -162,10 +168,7 @@ def combination_is_old(consts, degree, order, other_relations): # if the combina
     return ([r for r in other_relations
              if {c.symbol for c in r.constants} <= {c.symbol for c in consts} and r.degree <= degree and r.order <= order] + [None])[0]
 
-MIN_PRECISION_RATIO = 0.8
-MAX_PREC = 99999
-
-def check_subrelations(relation: PolyPSLQRelation, true_prec, test_prec=15, min_roi=2, extra_relations=None, verbose=False):
+def check_subrelations(relation: PolyPSLQRelation, test_prec=15, min_roi=2, extra_relations=None, verbose=False):
     subrelations = []
     extra_relations = extra_relations if extra_relations else []
     for i in range(1, len(relation.constants)):
@@ -173,14 +176,11 @@ def check_subrelations(relation: PolyPSLQRelation, true_prec, test_prec=15, min_
         for subset in combinations(relation.constants, i):
             if combination_is_old(subset, relation.degree, relation.order, subrelations + extra_relations):
                 continue
-            subresult, true_prec2 = poly_check(subset, relation.degree, relation.order, exponents, test_prec, min_roi, verbose)
+            subresult, _ = poly_check(subset, relation.degree, relation.order, exponents, test_prec, min_roi, verbose)
             if subresult:
-                subrel = compress_relation(subresult, list(subset), exponents, relation.degree, relation.order)
-                if true_prec2 >= MIN_PRECISION_RATIO * min(c.precision for c in subrel.constants):
-                    true_prec2 = min(true_prec2, MAX_PREC)
-                    subrelations += [subrel]
+                subrelations += [compress_relation(subresult, list(subset), exponents, relation.degree, relation.order)]
     # sometimes the relation can have no constants due to precision issues! this should catch it
-    return subrelations if subrelations else [] if (not relation.constants or true_prec < MIN_PRECISION_RATIO * min(c.precision for c in relation.constants)) else [relation]
+    return subrelations if subrelations else [] if not relation.constants else [relation]
 
 def check_consts(consts: List[PreciseConstant], exponents=None, degree=2, order=1, test_prec=15, min_roi=2, verbose=False):
     exponents = exponents if exponents else get_exponents(degree, order, len(consts))
@@ -188,12 +188,12 @@ def check_consts(consts: List[PreciseConstant], exponents=None, degree=2, order=
     if not result:
         return []
     if verbose:
+        orig_dps = mp.mp.dps
         with mp.workdps(5):
-            print(f'Found relation with precision ratio {true_prec / mp.mp.dps}')
+            print(f'Found relation with precision ratio {true_prec / orig_dps}')
     # now must check subrelations! PSLQ is only guaranteed to return a small norm,
     # but not guaranteed to return a 1-dimensional relation, see for example pslq([1,2,3])
-    true_prec = min(true_prec, MAX_PREC)
-    return check_subrelations(compress_relation(result, consts, exponents, degree, order), true_prec, test_prec, min_roi, [], verbose)
+    return check_subrelations(compress_relation(result, consts, exponents, degree, order), test_prec, min_roi, [], verbose)
 
 
 # ===== COPYPASTED FROM mpmath\identification.py WITH MODIFICATIONS =====
@@ -214,6 +214,7 @@ class IdentificationMethods(object):
     pass
 
 ctx = mp.mp
+PRECISION_RATIO = 0.8
 def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
     r"""
     Given a vector of real numbers `x = [x_0, x_1, ..., x_n]`, ``pslq(x)``
@@ -342,7 +343,7 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
         print("Warning: precision for PSLQ may be too low")
 
     if tol is None:
-        tol = ctx.mpf(2)**-(prec*3//4)
+        tol = ctx.mpf(2)**-int(prec*PRECISION_RATIO)
     else:
         tol = ctx.convert(tol)
 
@@ -419,6 +420,7 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
                 B[k][j] = B[k][j] + (t*B[k][i] >> prec)
     # Main algorithm
     global_best_err = mp.inf
+    global_best_res = None
     for REP in count():
         # Step 1
         m = -1
@@ -469,6 +471,7 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
         # "high quality" relation was detected. Reporting this to
         # the user somehow might be useful.
         best_err = mp.inf
+        best_i = 0
         for i in xrange(1, n+1):
             err = abs(y[i])
             # Maybe we are done?
@@ -476,18 +479,21 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
                 # We are done if the coefficients are acceptable
                 vec = [int(round_fixed(B[j][i], prec) >> prec) for j in \
                 xrange(1,n+1)]
-                if max(abs(v) for v in vec) < maxcoeff:
+                if all(abs(v)<maxcoeff for v in vec):
                     if verbose:
                         print("FOUND relation at iter %i/%i, error: %s" % \
                             (REP, -1 if mp.isinf(maxsteps) else maxsteps, ctx.nstr(err / ctx.mpf(2)**prec, 1)))
                     return vec
             best_err = min(err, best_err)
+            best_i = i
         # test error: if much bigger than global_best_err, trigger failsafe
         if best_err < global_best_err:
             global_best_err = best_err
+            global_best_res = [B[j][best_i] for j in xrange(1,n+1)]
         elif best_err * best_err > (global_best_err << prec):
             if verbose:
                 print("BAD ERROR FAILSAFE TRIGGERED")
+            return [int(round_fixed(x, prec) >> prec) for x in global_best_res]
             break
         # Calculate a lower bound for the norm. We could do this
         # more exactly (using the Euclidean norm) but there is probably

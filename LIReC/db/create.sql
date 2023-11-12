@@ -30,8 +30,8 @@ CREATE TABLE named_constant (
 
 CREATE TABLE pcf_canonical_constant (
     const_id UUID NOT NULL PRIMARY KEY REFERENCES constant (const_id),
-    original_a INT[],
-    original_b INT[],
+    --original_a INT[],
+    --original_b INT[],
 	"P" INT[] NOT NULL, -- must be in quotes otherwise it becomes lowercase...
 	"Q" INT[] NOT NULL,
 	last_matrix TEXT, -- solely because of the absurdly huge numbers that can go here... not even NUMERIC is enough...

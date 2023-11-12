@@ -109,8 +109,6 @@ class Universal:
     
     @staticmethod
     def fill_pcf_canonical(const: PcfCanonicalConstant, pcf: PCF, minimalist=False):
-        const.original_a = [int(coef) for coef in pcf.a.all_coeffs()]
-        const.original_b = [int(coef) for coef in pcf.b.all_coeffs()]
         top, bot = pcf.canonical_form()
         const.P = [int(coef) for coef in top.all_coeffs()]
         const.Q = [int(coef) for coef in bot.all_coeffs()]
@@ -134,7 +132,7 @@ class Universal:
             ext.base = Constant()
             depth_multiplier = depth_multiplier if depth_multiplier else 1 # when given explicitly, the user will probably want the exact depth they're specifying
         else:
-            pcf = PCF(ext.original_a, ext.original_b) if ext.original_a else PCF.from_canonical_form((ext.P, ext.Q))
+            pcf = PCF.from_canonical_form((ext.P, ext.Q))
             prev = [int(x) for x in ext.last_matrix.split(',')]
             depth = ext.depth
             depth_multiplier = depth_multiplier if depth_multiplier else 2 # intended for use from calc or calc_silent, then the multiplier gives this meaning

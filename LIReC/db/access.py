@@ -183,9 +183,6 @@ class LIReC_DB:
         """
         return [PCF.from_canonical_form(c) for c in self.canonical_forms()]
 
-    def get_original_pcfs(self) -> List[PCF]:
-        return [PCF(cf.original_a, cf.original_b) for cf in self.cfs if cf.original_a and cf.original_b]
-
     def identify(self, values, degree=2, order=1, min_prec=None, max_prec=None, min_roi=2, isolate=False, wide_search=False, verbose=False):
         if not values:
             return []

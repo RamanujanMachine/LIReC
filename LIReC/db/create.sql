@@ -16,6 +16,8 @@ CREATE TABLE constant (
 	value NUMERIC,
 	precision INT,
 	time_added timestamp DEFAULT current_timestamp,
+	source UUID REFERENCES source (source_id),
+	source_notes VARCHAR,
 	priority INT NOT NULL DEFAULT 1,
 	tweeted INT NOT NULL DEFAULT 0
 );
@@ -76,6 +78,13 @@ CREATE TABLE relation (
 	tweeted INT NOT NULL DEFAULT 0
 );
 
+CREATE TABLE source (
+	source_id UUID NOT NULL DEFAULT uuid_generate_v1() PRIMARY KEY,
+	alias VARCHAR UNIQUE,
+	reference VARCHAR UNIQUE,
+	link VARCHAR UNIQUE
+);
+
 CREATE TABLE constant_in_relation (
 	const_id UUID NOT NULL REFERENCES constant (const_id) ON UPDATE CASCADE ON DELETE CASCADE,
 	relation_id UUID NOT NULL REFERENCES relation (relation_id) ON UPDATE CASCADE ON DELETE CASCADE,
@@ -102,6 +111,7 @@ GRANT SELECT, REFERENCES ON power_of_constant TO spectator;
 GRANT SELECT ON pcf_family TO spectator;
 GRANT SELECT ON relation TO spectator;
 GRANT SELECT ON scan_history TO spectator;
+GRANT SELECT, REFERENCES ON source TO spectator;
 
 
 DROP ROLE IF EXISTS spectator_public;

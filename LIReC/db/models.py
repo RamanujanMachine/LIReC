@@ -23,6 +23,8 @@ class Constant(Base):
     value = Column(Numeric)
     precision = Column(Integer)
     time_added = Column(DateTime, server_default=text('CURRENT_TIMESTAMP'))
+    source = Column(ForeignKey('source.source_id'))
+    source_notes = Column(String)
     priority = Column(Integer, nullable=False, server_default=text('1'))
     tweeted = Column(Integer, nullable=False, server_default=text('0'))
 
@@ -52,8 +54,8 @@ class PcfCanonicalConstant(Base):
     )
 
     const_id = Column(ForeignKey('constant.const_id'), primary_key=True)
-    original_a = Column(ARRAY(Numeric()))
-    original_b = Column(ARRAY(Numeric()))
+    #original_a = Column(ARRAY(Numeric()))
+    #original_b = Column(ARRAY(Numeric()))
     P = Column(ARRAY(Numeric()), nullable=False)
     Q = Column(ARRAY(Numeric()), nullable=False)
     last_matrix = deferred(Column(Text())) # don't always need to load this!
@@ -127,3 +129,12 @@ class Relation(Base):
     tweeted = Column(Integer, nullable=False, server_default=text('0'))
 
     constants = relationship('Constant', secondary=constant_in_relation_table)
+
+
+class Source(Base):
+    __tablename__ = 'source'
+
+    source_id = Column(UUID, primary_key=True, server_default=text('uuid_generate_v1()'))
+    alias = Column(String, unique=True)
+    reference = Column(String, unique=True)
+    link = Column(String, unique=True)

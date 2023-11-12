@@ -420,7 +420,6 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
                 B[k][j] = B[k][j] + (t*B[k][i] >> prec)
     # Main algorithm
     global_best_err = mp.inf
-    global_best_res = None
     for REP in count():
         # Step 1
         m = -1
@@ -485,15 +484,12 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
                             (REP, -1 if mp.isinf(maxsteps) else maxsteps, ctx.nstr(err / ctx.mpf(2)**prec, 1)))
                     return vec
             best_err = min(err, best_err)
-            best_i = i
         # test error: if much bigger than global_best_err, trigger failsafe
         if best_err < global_best_err:
             global_best_err = best_err
-            global_best_res = [B[j][best_i] for j in xrange(1,n+1)]
         elif best_err * best_err > (global_best_err << prec):
             if verbose:
                 print("BAD ERROR FAILSAFE TRIGGERED")
-            return [int(round_fixed(x, prec) >> prec) for x in global_best_res]
             break
         # Calculate a lower bound for the norm. We could do this
         # more exactly (using the Euclidean norm) but there is probably

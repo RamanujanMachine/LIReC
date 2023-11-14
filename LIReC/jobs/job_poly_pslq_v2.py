@@ -86,7 +86,7 @@ def from_db_format(relation: models.Relation, consts: List[DualConstant]) -> Pol
 def all_relations() -> List[PolyPSLQRelation]:
     # faster to query everything at once!
     consts = {c.const_id:DualConstant.from_db(c) for c in db.session.query(models.Constant) if c.value}
-    rels = {r.relation_id:r for r in db.session.query(models.Relation)}
+    rels = {r.relation_id:r for r in db.session.query(models.Relation).filter(models.Relation.relation_type==ALGORITHM_NAME)}
     return [from_db_format(rels[relation_id], [consts[p[0]] for p in g]) for relation_id, g in groupby(db.session.query(models.constant_in_relation_table), lambda p:p[1])]
 
 def run_query(degree=2, order=1, min_precision=50, min_roi=2, testing_precision=None, bulk=10, filters=None):

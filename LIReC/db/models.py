@@ -27,6 +27,8 @@ class Constant(Base):
     source_notes = Column(String)
     priority = Column(Integer, nullable=False, server_default=text('1'))
     tweeted = Column(Integer, nullable=False, server_default=text('0'))
+    
+    source_ref = relationship('Source', lazy='subquery')
 
 
 class NamedConstant(Base):

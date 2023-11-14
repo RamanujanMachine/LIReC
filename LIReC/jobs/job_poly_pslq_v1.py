@@ -126,7 +126,7 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
         subsets = [combinations([DualConstant.from_db(c) for c in all_consts if c.const_id in query_data[const_type]] if const_type in query_data else get_consts(const_type, {**filters, 'global':global_filters}), filters[const_type]['count']) for const_type in filters]
         exponents = get_exponents(degree, order, total_consts)
         
-        old_relations = db.session.query(models.Relation).all()
+        old_relations = db.session.query(models.Relation).filter(models.Relation.relation_type==ALGORITHM_NAME).all()
         orig_size = len(old_relations)
         # even if the commented code were to be uncommented and implemented for
         # the scan_history table, this loop still can't be turned into list comprehension

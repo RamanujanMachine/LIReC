@@ -40,7 +40,7 @@ class LIReC_DB:
     def __init__(self):
         self.session = None
         self.auto_pcf = {
-            'depth': 10000,
+            'depth': 8192,
             'precision': 50,
             'force_fr': True,
             'timeout_sec': 60,

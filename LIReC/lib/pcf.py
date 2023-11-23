@@ -84,7 +84,7 @@ class ContinuedFraction:
             'timeout_sec': 0,
             'timeout_check_freq': 1024,
             'no_exception': False
-        }
+        } # TODO add ability to override eval_defaults in constructor via kwargs
     
     @property
     def value(self: ContinuedFraction) -> mpq:
@@ -144,7 +144,7 @@ class ContinuedFraction:
             if self.depth == kwargs['depth']:
                 self.mat = ContinuedFraction.Util.combine(self, mats, True)[0][0][0]
                 
-                prec = self.precision # check precision
+                prec = self.precision # check precision # TODO add check for negative precision?
                 if prec.is_infinite():
                     ex = IllegalPCFException('continuant denominator zero')
                     #if kwargs['no_exception']:
@@ -172,9 +172,10 @@ class ContinuedFraction:
             if not kwargs['no_exception']:
                 raise ex
         
-        rational, _ = poly_check([PreciseConstant(value, prec)], 1, 1, test_prec = MIN_PSLQ_DPS)
-        if rational:
-            self.true_value = mpq(rational[0], -rational[1])
+        if prec > 0:
+            rational, _ = poly_check([PreciseConstant(value, prec)], 1, 1, test_prec = MIN_PSLQ_DPS)
+            if rational:
+                self.true_value = mpq(rational[0], -rational[1])
         
         return self._end_eval(value, prec, extras_list, kwargs)
 
@@ -230,6 +231,8 @@ class PCF(ContinuedFraction):
         '''
         self.a = a if isinstance(a, Poly) else Poly(a, n)
         self.b = b if isinstance(b, Poly) else Poly(b, n)
+        if self.a == 0 or self.b == 0:
+            raise Exception('neither polynomial can be 0')
         if auto_deflate:
             self.deflate()
         self._pre_eval()

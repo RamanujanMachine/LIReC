@@ -133,7 +133,7 @@ def run_query(degree=2, order=1, min_precision=50, min_roi=2, testing_precision=
             consts = consts[bulk:]
             refill = False
         getLogger(LOGGER_NAME).debug(f'testing {len(testing_consts)} constants. {len(consts)} remain in reserve')
-        new_rels = check_consts(testing_consts, None, degree, order, testing_precision, min_roi)
+        new_rels = check_consts(testing_consts, degree, order, testing_precision, min_roi)
         if new_rels:
             getLogger(LOGGER_NAME).info(f'found {len(new_rels)} relations:')
             for r in new_rels:

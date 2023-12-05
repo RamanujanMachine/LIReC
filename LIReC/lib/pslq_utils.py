@@ -1,10 +1,12 @@
 from collections import Counter
 from functools import reduce
 from itertools import chain, combinations, combinations_with_replacement, count, takewhile
-from operator import mul, add
+from operator import mul, add, and_
 from typing import List
 import mpmath as mp
 from sympy import sympify, Symbol
+
+MIN_PSLQ_DPS = 15
 
 class PreciseConstant:
     value: mp.mpf
@@ -13,7 +15,9 @@ class PreciseConstant:
     
     def __init__(self, value, precision, symbol=None):
         self.precision = int(precision)
-        with mp.workdps(self.precision):
+        # these values are intended to feed into PSLQ later, and if we try to initialize them with
+        # less precision than the minimum with which PSLQ can work, it will cause problems
+        with mp.workdps(max(self.precision, MIN_PSLQ_DPS)):
             self.value = mp.mpf(str(value))
         self.symbol = symbol
 
@@ -72,8 +76,6 @@ def get_exponents(degree, order, total_consts):
     return [c for c in map(Counter, chain.from_iterable(combinations_with_replacement(range(total_consts), i) for i in range(degree + 1)))
             if not any(i for i in c.values() if i > order)]
 
-MIN_PSLQ_DPS = 15
-
 def poly_get(consts, exponents):
     mp.mp.dps = max(min(c.precision for c in consts), MIN_PSLQ_DPS) # must be at least 15!
     values = [c.value for c in consts]
@@ -106,16 +108,13 @@ def poly_check(consts, degree = None, order = None, exponents = None, test_prec 
             if true_min < MIN_PSLQ_DPS: # otherwise let pslq automatically set tol
                 tol_offset = mp.floor(mp.log10(consts[precs.index(true_min)].value)) - max(mp.floor(mp.log10(x)) for x in poly)
                 tol = mp.mpf(10)**(tol_offset - min(11,int(true_min)))
-            with mp.workdps(test_prec): # intentionally low-resolution to quickly try something basic...
-                res = [1 if mp.mp.to_fixed(x, mp.mp.prec) == 0 else 0 for x in poly]
-                if any(res):
-                    return res, mp.mp.dps # abort early! some numbers are too small!
+            with mp.workdps(max(test_prec, MIN_PSLQ_DPS)): # intentionally low-resolution to quickly try something basic...
                 res = pslq(poly, tol, mp.inf, mp.inf, verbose)
             # don't know why, but when testing PSLQ on random vectors, the expected amount of total digits in the
             # result is approximately the same as the working precision. this is the justification for calculating roi
             if res:
-                substance = min_roi * sum(0 if not x else len(str(abs(x))) for x in res)
-                if test_prec >= substance:
+                substance = sum(0 if not x else len(str(abs(x))) for x in res)
+                if test_prec >= min_roi * substance:
                     return res, poly_eval(poly, res, [c.precision for c in consts])
                 elif verbose:
                     print(f'GARBAGE RELATION FOUND. substance={substance}')
@@ -133,6 +132,12 @@ def compress_relation(result, consts, exponents, degree, order, verbose=False):
     cond_print(verbose, f'Original relation is {result}')
     
     consts = list(consts) # shallow copy to preserve the original list
+    
+    nonzero = [pair for pair in zip(exponents, result) if pair[1]] # first remove obvious common factors (if any exist)
+    common = reduce(and_, [c for c,_ in nonzero])
+    # could have used dict here but need Counters for computing common, and Counter can't be a key
+    result = [([x for test_e,x in nonzero if e + common == test_e] + [0])[0] for e in exponents]
+    
     indices_per_var = [[i for i, e in enumerate(exponents) if e[j]] for j in range(len(consts))]
     redundant_vars = [i for i, e in enumerate(indices_per_var) if not any(result[j] for j in e)]
     redundant_coeffs = set()
@@ -182,15 +187,26 @@ def check_subrelations(relation: PolyPSLQRelation, test_prec=15, min_roi=2, extr
     # sometimes the relation can have no constants due to precision issues! this should catch it
     return subrelations if subrelations else [] if not relation.constants else [relation]
 
-def check_consts(consts: List[PreciseConstant], exponents=None, degree=2, order=1, test_prec=15, min_roi=2, verbose=False):
-    exponents = exponents if exponents else get_exponents(degree, order, len(consts))
-    result, true_prec = poly_check(consts, degree, order, exponents, test_prec, min_roi, verbose)
+def check_consts(consts: List[PreciseConstant], degree=2, order=1, test_prec=15, min_roi=2, verbose=False):
+    min_order, max_order = 1, order # first "binary search" over the orders
+    result, true_prec = [], -1
+    while max_order > min_order:
+        avg_order = (min_order + max_order) // 2
+        exponents = get_exponents(degree, order, len(consts)) # need later for compress_relation
+        result, true_prec = poly_check(consts, degree, avg_order, exponents, test_prec, min_roi, verbose)
+        if result:
+            relation = compress_relation(relation, consts, exponents, degree, order)
+            consts, degree, max_order = relation.constants, relation.degree, relation.order
+        else:
+            min_order = avg_order + 1
+    # now min_order == max_order == avg_order, and either the minimal order has been found, or no relation exists
+    exponents = get_exponents(degree, order, len(consts))
+    result, true_prec = poly_check(consts, degree, min_order, exponents, test_prec, min_roi, verbose)
     if not result:
         return []
     if verbose:
-        orig_dps = mp.mp.dps
         with mp.workdps(5):
-            print(f'Found relation with precision ratio {true_prec / orig_dps}')
+            print(f'Found relation with precision ratio {true_prec / test_prec}')
     # now must check subrelations! PSLQ is only guaranteed to return a small norm,
     # but not guaranteed to return a 1-dimensional relation, see for example pslq([1,2,3])
     return check_subrelations(compress_relation(result, consts, exponents, degree, order), test_prec, min_roi, [], verbose)
@@ -214,7 +230,7 @@ class IdentificationMethods(object):
     pass
 
 ctx = mp.mp
-PRECISION_RATIO = 0.8
+PRECISION_RATIO = 0.75
 def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
     r"""
     Given a vector of real numbers `x = [x_0, x_1, ..., x_n]`, ``pslq(x)``
@@ -487,7 +503,7 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
         # test error: if much bigger than global_best_err, trigger failsafe
         if best_err < global_best_err:
             global_best_err = best_err
-        elif best_err * best_err > (global_best_err << prec):
+        elif best_err * best_err > (global_best_err << prec) and REP > 100: # initial anti-failsafe grace period
             if verbose:
                 print("BAD ERROR FAILSAFE TRIGGERED")
             break

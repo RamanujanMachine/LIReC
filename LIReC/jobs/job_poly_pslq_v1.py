@@ -124,7 +124,6 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
         
         all_consts = db.session.query(models.Constant).all() # need to "internally refresh" the constants so they get committed right
         subsets = [combinations([DualConstant.from_db(c) for c in all_consts if c.const_id in query_data[const_type]] if const_type in query_data else get_consts(const_type, {**filters, 'global':global_filters}), filters[const_type]['count']) for const_type in filters]
-        exponents = get_exponents(degree, order, total_consts)
         
         old_relations = db.session.query(models.Relation).filter(models.Relation.relation_type==ALGORITHM_NAME).all()
         orig_size = len(old_relations)
@@ -136,7 +135,7 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
             if relation_is_new(consts, degree, order, old_relations):
                 if DEBUG_PRINT_CONSTANTS:
                     getLogger(LOGGER_NAME).debug(f'checking consts: {[c.orig.const_id for c in consts]}')
-                new_relations = [to_db_format(r) for r in check_consts(consts, exponents, degree, order)]
+                new_relations = [to_db_format(r) for r in check_consts(consts, degree, order)]
                 if new_relations:
                     getLogger(LOGGER_NAME).info(f'Found relation(s) on constants {[c.orig.const_id for c in consts]}!')
                     try_count = 1

@@ -183,7 +183,7 @@ class LIReC_DB:
         """
         return [PCF.from_canonical_form(c) for c in self.canonical_forms()]
 
-    def identify(self, values, degree=2, order=1, min_prec=None, max_prec=None, min_roi=2, isolate=False, wide_search=False, verbose=False):
+    def identify(self, values, degree=2, order=1, min_prec=None, max_prec=None, min_roi=2, isolate=None, wide_search=False, verbose=False):
         if not values:
             return []
         numbers, named = [], []
@@ -220,7 +220,7 @@ class LIReC_DB:
                 cond_print(verbose, f'Notice: isolating when order > 1 can give weird results.')
         
         # step 1 - try to PSLQ the numbers alone
-        res = check_consts(numbers, None, degree, order, min_prec, min_roi, verbose)
+        res = check_consts(numbers, degree, order, min_prec, min_roi, verbose)
         if res:
             cond_print(verbose, 'Found relation(s) between the given numbers without using the named constants!')
             return res
@@ -244,7 +244,7 @@ class LIReC_DB:
         cond_print(verbose, 'Query done. Finding relations...')
         
         min_prec = min(v.precision for v in numbers)
-        res = check_consts(numbers, None, degree, order, min_prec, min_roi, verbose)
+        res = check_consts(numbers, degree, order, min_prec, min_roi, verbose)
         if isinstance(isolate, int) or (isolate and named):
             isolate = isolate if isinstance(isolate, int) else named[0].symbol
             for r in res:

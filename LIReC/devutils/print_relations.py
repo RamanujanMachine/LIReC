@@ -71,7 +71,7 @@ def main():
                 toprint += f', source: {const.source_ref.alias} ({const.source_notes})'
             toprint += '\r\n'
         
-        print(toprint + '} (uuids: ' + f'{[str(c.const_id) for c in constants]})')
+        print(toprint + '} (relation id ' + str(rel.relation_id) + ', const ids ' + f'{[str(c.const_id) for c in constants]})')
         
         ids = {c.const_id for c in constants}
         if any(v for v,consts in rels_vague if ids == {c.const_id for c in consts}):

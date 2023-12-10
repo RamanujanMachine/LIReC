@@ -7,6 +7,7 @@ import mpmath as mp
 from sympy import sympify, Symbol
 
 MIN_PSLQ_DPS = 15
+PRECISION_RATIO = 0.75
 
 class PreciseConstant:
     value: mp.mpf
@@ -185,7 +186,9 @@ def check_subrelations(relation: PolyPSLQRelation, test_prec=15, min_roi=2, extr
             if subresult:
                 subrelations += [compress_relation(subresult, list(subset), exponents, relation.degree, relation.order)]
     # sometimes the relation can have no constants due to precision issues! this should catch it
-    return subrelations if subrelations else [] if not relation.constants else [relation]
+    # also need to independently check if true_prec is significant when compared to the constants themselves,
+    # since test_prec is typically much lower than the maximum reasonable precision
+    return subrelations if subrelations else [] if (not relation.constants or relation.precision < PRECISION_RATIO * min(c.precision for c in relation.constants)) else [relation]
 
 def check_consts(consts: List[PreciseConstant], degree=2, order=1, test_prec=15, min_roi=2, verbose=False):
     min_order, max_order = 1, order # first "binary search" over the orders
@@ -230,7 +233,6 @@ class IdentificationMethods(object):
     pass
 
 ctx = mp.mp
-PRECISION_RATIO = 0.75
 def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
     r"""
     Given a vector of real numbers `x = [x_0, x_1, ..., x_n]`, ``pslq(x)``

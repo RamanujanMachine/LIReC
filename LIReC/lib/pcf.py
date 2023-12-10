@@ -17,6 +17,8 @@ def _poly_eval(poly: List, n):
     # current fastest method, poly must be coefficients in increasing order of exponent
     # P.S.: if you're curious and don't feel like looking it up, the difference between
     # mpz and xmpz is that xmpz is mutable, so in-place operations are faster
+    # TODO faster method to go in reverse? initial conditions are res = leading coeff, loop step is res = res * n + coeff
+    #      don't need c anymore, and one less multiplication
     c = xmpz(1)
     res = xmpz(0)
     for coeff in poly:

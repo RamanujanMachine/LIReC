@@ -106,7 +106,7 @@ def poly_check(consts, degree = None, order = None, exponents = None, test_prec 
             true_min = min(precs)
             tol = None
             if true_min < MIN_PSLQ_DPS: # otherwise let pslq automatically set tol
-                tol_offset = mp.floor(mp.log10(consts[precs.index(true_min)].value)) - max(mp.floor(mp.log10(x)) for x in poly)
+                tol_offset = mp.floor(mp.log10(consts[precs.index(true_min)].value)) - max(mp.floor(mp.log10(abs(x))) for x in poly)
                 tol = mp.mpf(10)**(tol_offset - min(11,int(true_min)))
             with mp.workdps(max(test_prec, MIN_PSLQ_DPS)): # intentionally low-resolution to quickly try something basic...
                 res = pslq(poly, tol, mp.inf, mp.inf, verbose)
@@ -195,7 +195,7 @@ def check_consts(consts: List[PreciseConstant], degree=2, order=1, test_prec=15,
         exponents = get_exponents(degree, order, len(consts)) # need later for compress_relation
         result, true_prec = poly_check(consts, degree, avg_order, exponents, test_prec, min_roi, verbose)
         if result:
-            relation = compress_relation(relation, consts, exponents, degree, order)
+            relation = compress_relation(result, consts, exponents, degree, order)
             consts, degree, max_order = relation.constants, relation.degree, relation.order
         else:
             min_order = avg_order + 1

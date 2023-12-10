@@ -3,6 +3,7 @@ import logging
 from collections import namedtuple
 from decimal import Decimal, getcontext
 from functools import reduce
+from itertools import combinations
 from sympy import sympify
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
@@ -183,70 +184,90 @@ class LIReC_DB:
         """
         return [PCF.from_canonical_form(c) for c in self.canonical_forms()]
 
-    def identify(self, values, degree=2, order=1, min_prec=None, max_prec=None, min_roi=2, isolate=None, wide_search=False, verbose=False):
-        if not values:
+    def identify(self, values, degree=2, order=1, min_prec=None, max_prec=None, min_roi=2, isolate=None, first_step=True, wide_search=False, verbose=False):
+        if not values: # SETUP - organize values
             return []
-        numbers, named = [], []
+        numbers, named = {}, {}
         for i,v in enumerate(values): # first iteration: detect expressions
             if isinstance(v, PreciseConstant):
-                numbers += [v]
+                numbers[i] = v
             else:
                 as_expr = sympify(str(v))
                 if as_expr.free_symbols:
-                    named += [as_expr]
+                    named[i] = as_expr
                 else:
                     if isinstance(v, float):
                         cond_print(verbose, "Warning: Python's default float type suffers from rounding errors and limited precision! Try inputting values as string or mpmath.mpf (or pslq_utils.PreciseConstant) for better results.")
                     try:
-                        numbers += [PreciseConstant(v, len(str(v).replace('.','').rstrip('0')), f'c{i}')]
+                        numbers[i] = PreciseConstant(v, len(str(v).replace('.','').rstrip('0')), f'c{i}')
                     except: # no free symbols but cannot turn into mpf means it involves only sympy constants. need min_prec later
-                        named += [as_expr]
+                        named[i] = as_expr
         
         if not min_prec:
-            min_prec = min(v.precision for v in numbers)
+            min_prec = min(v.precision for v in numbers.values())
             cond_print(verbose, f'Notice: No minimal precision given, assuming {min_prec} accurate decimal digits')
         if min_prec < MIN_PSLQ_DPS: # too low for PSLQ to work in the usual way!
             cond_print(verbose, 'Notice: Precision too low. Switching to manual tolerance mode. Might get too many results.')
         max_prec = max_prec if max_prec else min_prec * 2
         
         if isolate:
-            if not isinstance(isolate, int):
-                if not named:
-                    cond_print(verbose, "Warning: no named constants given! Don't know what to isolate for!")
-                    isolate = False
-                elif len(named) > 1:
-                    cond_print(verbose, f'Notice: More than one named constant (or expression involving named constants) was given! Will isolate for {named[0]}.')
+            if not named:
+                cond_print(verbose, "Warning: no named constants given! Don't know what to isolate for!")
+                isolate = None
+            elif len(named) > 1:
+                cond_print(verbose, f'Notice: More than one named constant (or expression involving named constants) was given! Will isolate for {list(named)[0]}.')
             if order > 1:
                 cond_print(verbose, f'Notice: isolating when order > 1 can give weird results.')
         
-        # step 1 - try to PSLQ the numbers alone
-        res = check_consts(numbers, degree, order, min_prec, min_roi, verbose)
-        if res:
-            cond_print(verbose, 'Found relation(s) between the given numbers without using the named constants!')
-            return res
+        res = None
+        if first_step: # STEP 1 - try to PSLQ the numbers alone
+            res = check_consts(list(numbers.values()), degree, order, min_prec, min_roi, verbose)
+            if res:
+                cond_print(verbose, 'Found relation(s) between the given numbers without using the named constants!')
+            elif not named and not wide_search:
+                cond_print(verbose, 'No named constants were given, and the given numbers have no relation. Consider running with wide_search=True to search with all named constants.')
+                return []
         
-        if not named and not wide_search:
-            cond_print(verbose, 'No named constants were given, and the given numbers have no relation. Run with wide_search=True to search with all named constants.')
-            return []
+        if not res: # STEP 2 - add named constants to the mix
+            if named or wide_search:
+                cond_print(verbose, 'Querying database...')
+                names = [c for c in self._get_all(models.NamedConstant) if c.base.value and c.base.precision >= MIN_PSLQ_DPS]
+                if named:
+                    for k in named:
+                        precision = min(c.base.precision for c in names if sympify(c.name) in named[k].free_symbols) if named[k].free_symbols else len(str(named[k]).replace('.','').rstrip('0'))
+                        mp.mp.dps = max(precision, MIN_PSLQ_DPS)
+                        value = named[k].subs({c.name:mp.mpf(str(c.base.value)) for c in names}).evalf(mp.mp.dps) # sympy can ignore unnecessary variables
+                        numbers[k] = PreciseConstant(value, precision, f'({named[k]})')
+                cond_print(verbose, 'Query done. Finding relations...')
+                numbers = [numbers[k] for k in sorted(numbers)] # can flatten now, and everything will be in the original order still
+                
+                if named: # previous code only for wide_search later
+                    min_prec = min(v.precision for v in numbers)
+                    res = check_consts(numbers, degree, order, min_prec, min_roi, verbose)
         
-        # step 2 - add named constants to the mix
-        cond_print(verbose, 'Querying database...')
-        names = [c for c in self._get_all(models.NamedConstant) if c.base.value and c.base.precision >= MIN_PSLQ_DPS]
-        if named:
-            for expr in named:
-                precision = min(c.base.precision for c in names if sympify(c.name) in expr.free_symbols) if expr.free_symbols else len(str(expr).replace('.','').rstrip('0'))
-                mp.mp.dps = max(precision, MIN_PSLQ_DPS)
-                value = expr.subs({c.name:mp.mpf(str(c.base.value)) for c in names}).evalf(mp.mp.dps) # sympy can ignore unnecessary variables
-                numbers += [PreciseConstant(value, precision, f'({expr})')]
-        else:
-            cond_print(verbose, 'Warning: Currently the wide search is not very efficient. This may take a while...')
-            named = [PreciseConstant(c.base.value, c.base.precision, c.name) for c in names]
-        cond_print(verbose, 'Query done. Finding relations...')
+        if not res and wide_search: # STEP 3 - wide search
+            try: # if it's a generator, convert it first
+                wide_search = set(wide_search)
+            except:
+                pass
+            consts = [PreciseConstant(c.base.value, c.base.precision, c.name) for c in names]
+            sizes = sorted(wide_search) if isinstance(wide_search, set) else range(1, len(consts))
+            original_symbols = {n.symbol for n in numbers}
+            cond_print(verbose, 'Wide search beginning (PSLQ verbose prints are suppressed during the wide search!)')
+            for i in sizes:
+                cond_print(verbose, f'Searching subsets of size {i}')
+                for subset in combinations(consts, i):
+                    to_test = numbers + list(subset)
+                    min_prec = min(v.precision for v in to_test)
+                    res = check_consts(to_test, degree, order, min_prec, min_roi, False) # too much printing!
+                    res = [r for r in res if {c.symbol for c in r.constants} & original_symbols]
+                    if res:
+                        break
+                if res:
+                    break
         
-        min_prec = min(v.precision for v in numbers)
-        res = check_consts(numbers, degree, order, min_prec, min_roi, verbose)
         if isinstance(isolate, int) or (isolate and named):
-            isolate = isolate if isinstance(isolate, int) else named[0].symbol
+            isolate = isolate if isinstance(isolate, int) or isinstance(isolate, str) else named[0].symbol
             for r in res:
                 r.isolate = isolate
         return res

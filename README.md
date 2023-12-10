@@ -31,6 +31,7 @@ The `db.identify` function allows one to check one (or more) numeric values agai
 - First, any decimal expressions within `values` (see below) are tested against each other for relation. This can be skipped by inputting `first_step=False` (see below).
 - If nothing was found yet, all expressions in `values` are tested together for a relation.
 - Finally, if still nothing was found and `wide_search` is truthy (see below), executes an iterative search against all named constants in the database, stopping at the first relation found. 
+
 The inputs are:
 1. `values`: List that contains any combination of the following:
    - Numeric values. It is not recommended to use python's native `float` type as it cannot reach high precision. Instead, use `str` (or `decimal.Decimal` or `mpmath.mpf`) for better results. Each such value will be given a name `c{i}` where `i` is its position in `values`, and these are assumed to all be accurate up to the least accurate value among them (unless `min_prec` is specified, see below). If this is not the case, input less digits or explicitly specify `min_prec`.

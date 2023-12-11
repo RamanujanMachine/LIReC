@@ -184,7 +184,9 @@ def check_subrelations(relation: PolyPSLQRelation, test_prec=15, min_roi=2, extr
                 continue
             subresult, _ = poly_check(subset, relation.degree, relation.order, exponents, test_prec, min_roi, verbose)
             if subresult:
-                subrelations += [compress_relation(subresult, list(subset), exponents, relation.degree, relation.order)]
+                subresult = compress_relation(subresult, list(subset), exponents, relation.degree, relation.order)
+                if subresult.precision >= PRECISION_RATIO * min(c.precision for c in subresult.constants):
+                    subrelations += [subresult]
     # sometimes the relation can have no constants due to precision issues! this should catch it
     # also need to independently check if true_prec is significant when compared to the constants themselves,
     # since test_prec is typically much lower than the maximum reasonable precision

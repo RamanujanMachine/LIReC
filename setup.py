@@ -18,5 +18,6 @@ setup(
         'gmpy2>=2.1.5',
         'mpmath>=1.2.1',
         'sympy>=1.5.1',
+        'PyLaTeX>=1.4.1',
     ]
 )

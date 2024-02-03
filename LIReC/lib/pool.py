@@ -106,11 +106,17 @@ class WorkerPool:
             if queried_data == -1:
                 raise Exception('internal error')
             extra_args = getattr(module, 'EXECUTE_NEEDS_ARGS', False)
+            keep_unsplit = getattr(module, 'KEEP_UNSPLIT', False)
+            send_index = getattr(module, 'SEND_INDEX', False)
             if not run_async:
+                if send_index:
+                    queried_data = (-1, 1, queried_data)
                 results = [module.execute_job(queried_data, **args) if extra_args else module.execute_job(queried_data)]
             else:
                 async_cores = async_cores if async_cores != 0 else cpu_count()
-                for queried_chunk in WorkerPool.split_parameters(queried_data, async_cores):
+                for i, queried_chunk in enumerate(WorkerPool.split_parameters(queried_data, async_cores, keep_unsplit)):
+                    if send_index:
+                        queried_chunk = (i, async_cores, queried_chunk)
                     job_queue.put(Message.get_execution_message(module_path, (queried_chunk, args) if extra_args else queried_chunk))
                 results = []
                 while len(results) < async_cores:
@@ -157,7 +163,7 @@ class WorkerPool:
         return result
 
     @staticmethod
-    def split_parameters(parameters, pool_size):
+    def split_parameters(parameters, pool_size, keep_unsplit=False):
         from fractions import Fraction
         def arange(start, end=None, step=1):
             if end == None:
@@ -167,8 +173,10 @@ class WorkerPool:
                 yield start
                 start += step
         if isinstance(parameters, dict):
-            split = {k:(WorkerPool.split_parameters(parameters[k], pool_size) if isinstance(parameters[k], list) else parameters[k]) for k in parameters}
+            split = {k:(WorkerPool.split_parameters(parameters[k], pool_size, keep_unsplit) if isinstance(parameters[k], list) else parameters[k]) for k in parameters}
             return [{k:split[k][i] if isinstance(split[k], list) else split[k] for k in split} for i in range(pool_size)]
+        if keep_unsplit:
+            return [parameters] * pool_size
         l = max(len(parameters), 1)
         chunk_size = Fraction(l, pool_size)
         return [parameters[ceil(i):ceil(i+chunk_size)] for i in arange(0, l, chunk_size)]

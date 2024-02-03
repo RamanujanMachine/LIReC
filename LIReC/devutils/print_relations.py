@@ -21,8 +21,8 @@ class Explained:
         else:
             self.explained_by = [explained_by]
 
-def expand(const, nameds, pcfs):
-    res = nameds.get(const.const_id, pcfs.get(const.const_id, None))
+def expand(const, nameds, pcfs, derived):
+    res = nameds.get(const.const_id, pcfs.get(const.const_id, derived.get(const.const_id, None)))
     if not res:
         print(f'const {const.const_id} has no extension!')
     return res or const
@@ -35,7 +35,8 @@ def main():
     rels = {r.relation_id:r for r in db.session.query(Relation)}
     nameds = {n.const_id:n for n in db.session.query(NamedConstant)}
     pcfs = {p.const_id:Explained(p) for p in db.session.query(PcfCanonicalConstant)}
-    rels = [[rels[relation_id], [expand(consts[p[0]], nameds, pcfs) for p in g]] for relation_id, g in groupby(db.session.query(constant_in_relation_table), lambda p:p[1])]
+    derived = {d.const_id:d for d in db.session.query(DerivedConstant)}
+    rels = [[rels[relation_id], [expand(consts[p[0]], nameds, pcfs, derived) for p in g]] for relation_id, g in groupby(db.session.query(constant_in_relation_table), lambda p:p[1])]
     rels_vague = [x for x in rels if x[0].relation_type=='VAGUE']
     rels = [x for x in rels if x[0].relation_type!='VAGUE']
     print(f'query done')
@@ -63,6 +64,8 @@ def main():
                 if const.explained_by:
                     toprint += f', related to: {[n.name if isinstance(n, NamedConstant) else n.const_id for n in const.explained_by]}'
                 const=const.pcf
+            elif isinstance(const, DerivedConstant) and const.family == 'addon':
+                toprint += f'    {const.args["name"]}'
             else:
                 print(f'WARNING: constant with uuid {const.const_id} has no known extension!')
             const=const.base

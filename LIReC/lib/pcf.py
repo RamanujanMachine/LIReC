@@ -6,7 +6,7 @@ import gmpy2
 from gmpy2 import mpz, mpfr, xmpz, mpq
 import mpmath as mp
 from operator import floordiv
-from sympy import Poly, gcd as sgcd, cancel, re, ceiling, factorint
+from sympy import Poly, gcd, cancel, re, ceiling, factorint, RootOf
 from sympy.abc import n
 from time import time
 from typing import List, Tuple, Callable
@@ -14,22 +14,24 @@ from LIReC.lib.pslq_utils import poly_check, PreciseConstant, MIN_PSLQ_DPS
 CanonicalForm = Tuple[List[int], List[int]]
 
 def _poly_eval(poly: List, n):
-    # current fastest method, poly must be coefficients in increasing order of exponent
+    # current fastest method, poly must be coefficients in decreasing order of exponent
     # P.S.: if you're curious and don't feel like looking it up, the difference between
     # mpz and xmpz is that xmpz is mutable, so in-place operations are faster
-    # TODO faster method to go in reverse? initial conditions are res = leading coeff, loop step is res = res * n + coeff
-    #      don't need c anymore, and one less multiplication
-    c = xmpz(1)
     res = xmpz(0)
     for coeff in poly:
-        res += coeff * c
-        c *= n
+        res = res * n + coeff
     return mpz(res)
 
-CALC_JUMP = 256
-REDUCE_JUMP = 128
-LOG_CALC_JUMP = 7
-LOG_REDUCE_JUMP = 6
+def _ceiling_roots(poly: Poly):
+    roots = poly.all_roots()
+    for r in roots:
+        if isinstance(r, RootOf):
+            r = r.n(5) # basic eval attempt
+            split = str(r).split('e+')
+            if len(split) > 1:
+                r = r.n(int(split[1]) + 3) # evaluate enough digits
+        yield ceiling(re(r))
+
 FR_THRESHOLD = 0.1
 MAX_PREC = mpfr(99999)
     
@@ -39,7 +41,7 @@ class IllegalPCFException(Exception):
 class NoFRException(Exception):
     pass
 
-class ContinuedFraction:
+class GCF:
 
     class Util:
     
@@ -54,19 +56,15 @@ class ContinuedFraction:
             return [[mat[0][0] // x, mat[0][1] // x],[mat[1][0] // x, mat[1][1] // x]]
         
         @staticmethod
-        def as_mpf(q: mpq) -> mp.mpf:
-            return mp.mpf(q.numerator) / mp.mpf(q.denominator)
-        
-        @staticmethod
-        def combine(self: ContinuedFraction, mats, force: bool = False):
+        def combine(self: GCF, mats, kwargs, force: bool = False):
             # technically it's not necessary to return mats since everything is in-place
             # operations, but just in case one day a non-in-place operation is added...
             orig_len = len(mats)
             while len(mats) > 1 and (force or mats[-1][1] >= mats[-2][1]):
                 mat2 = mats.pop()
                 mat1 = mats.pop()
-                mats += [(ContinuedFraction.Util.mult(mat1[0], mat2[0]), mat1[1] + mat2[1])]
-            return self._end_combine(mats, orig_len, force)
+                mats += [(GCF.Util.mult(mat1[0], mat2[0]), mat1[1] + mat2[1])]
+            return self._end_combine(mats, orig_len, kwargs, force)
     
     a: Callable[[int], Any]
     b: Callable[[int], Any]
@@ -74,42 +72,63 @@ class ContinuedFraction:
     depth: int
     true_value: mpq or None
     
-    def __init__(self: ContinuedFraction, a: Callable[[int], Any], b: Callable[[int], Any], mat: List[int] or None = None, depth: int = 0):
+    def __init__(self: GCF, a: Callable[[int], Any], b: Callable[[int], Any], mat: List[int] or None = None, init_depth: int = 0, qol: bool = True, **kwargs):
         self.a_func = a
         self.b_func = b
         self.mat = [mat[0:2], mat[2:4]] if mat else [[1, self.a_func(0)], [0, 1]]
-        self.depth = depth
+        self.depth = init_depth
         self.true_value = None
         self.eval_defaults = {
             'depth': 2 ** 13, # at this depth, calculation of one PCF is expected to take about 3 seconds, depending on your machine
             'precision': 50,
             'timeout_sec': 0,
             'timeout_check_freq': 1024,
-            'no_exception': False
-        } # TODO add ability to override eval_defaults in constructor via kwargs
+            'no_exception': False,
+            'rational_test': True
+        }
+        self.eval_defaults = {**self.eval_defaults, **kwargs}
+        if qol: # quality of life: if any one value in _auto_disable_dict is specified, zero out the others
+            d = self._auto_disable_dict(kwargs)
+            if any(d.values()):
+                self.eval_defaults = {**self.eval_defaults, **d}
     
     @property
-    def value(self: ContinuedFraction) -> mpq:
-        return mpq(self.mat[0][1], self.mat[1][1])
+    def value_rational_unreduced(self: GCF) -> Tuple(mpz, mpz):
+        return self.mat[0][1], self.mat[1][1] # mpq automatically reduces gcd, sometimes don't want that
     
     @property
-    def precision(self: ContinuedFraction) -> gmpy2.mpfr:
+    def value_rational(self: GCF) -> mpq:
+        return mpq(*self.value_rational_unreduced)
+    
+    @property
+    def value(self: GCF) -> mp.mpf:
+        return mp.mpf(self.value_rational.numerator) / mp.mpf(self.value_rational.denominator)
+    
+    @property
+    def precision(self: GCF) -> gmpy2.mpfr:
         to_compare = self.true_value if self.true_value != None else mpq(self.mat[0][0], self.mat[1][0])
-        return gmpy2.floor(-gmpy2.log10(abs(self.value - to_compare))) if all(self.mat[1]) else MAX_PREC
+        return gmpy2.floor(-gmpy2.log10(abs(self.value_rational - to_compare))) if all(self.mat[1]) else MAX_PREC
+    
+    def _auto_disable_dict(self, kwargs):
+        return {
+            'precision': kwargs.get('precision', 0),
+            'depth': kwargs.get('depth', 0),
+            'rational_test': kwargs.get('rational_test', False)
+        }
     
     def _pre_eval(self):
         pass
     
-    def _end_combine(self, mats, orig_len, force=False):
-        return mats, None
-    
     def _end_depth(self, extras_list, kwargs):
         return kwargs
     
-    def _end_eval(self, value, prec, extras_list, kwargs):
+    def _end_eval(self, val, prec, extras_list, kwargs):
         return self
     
-    def eval(self: ContinuedFraction, **kwargs) -> ContinuedFraction or Exception:
+    def _end_combine(self, mats, orig_len, kwargs, force=False):
+        return mats, None
+    
+    def eval(self: GCF, **kwargs) -> GCF or Exception:
         '''
         Approximate the value of this PCF. Will first calculate to an initial depth,
         and then will procedurally double the depth until the desired precision is obtained.
@@ -120,7 +139,8 @@ class ContinuedFraction:
             'force_fr': Ensure the result has FR if possible (AKA keep going if INDETERMINATE_FR), defaults to True
             'timeout_sec': If nonzero, halt calculation after this many seconds and return whatever you got, no matter what. Defaults to 0
             'timeout_check_freq': Only check for timeout every this many iterations. Defaults to 1024
-            'no_exception': Return exceptions (or ContinuedFraction.Result if possible) instead of raising them (see below). Defaults to False
+            'no_exception': Return exceptions (or GCF.Result if possible) instead of raising them (see below). Defaults to False
+            'rational_test': Whether or not to attempt a PSLQ run to identify the limit value as a rational value. Defaults to True.
         
         Exceptions:
             NoFRException: The PCF doesn't converge.
@@ -138,13 +158,13 @@ class ContinuedFraction:
         mats = [(self.mat, self.depth)]
         while self.depth < kwargs['depth']:
             self.depth += 1
-            mats, extra = ContinuedFraction.Util.combine(self, mats + [([[0, self.b_func(self.depth)], [1, self.a_func(self.depth)]], 1)])
+            mats, extra = GCF.Util.combine(self, mats + [([[0, self.b_func(self.depth)], [1, self.a_func(self.depth)]], 1)], kwargs)
             if extra:
                 extras_list += [extra]
             if kwargs['timeout_sec'] and self.depth % kwargs['timeout_check_freq'] == 0 and time() - start > kwargs['timeout_sec']:
                 break
             if self.depth == kwargs['depth']:
-                self.mat = ContinuedFraction.Util.combine(self, mats, True)[0][0][0]
+                self.mat = GCF.Util.combine(self, mats, kwargs, True)[0][0][0]
                 
                 prec = self.precision # check precision # TODO add check for negative precision?
                 if prec.is_infinite():
@@ -162,10 +182,10 @@ class ContinuedFraction:
                     #    return kwargs
                     raise kwargs
         
-        self.mat = ContinuedFraction.Util.combine(self, mats, True)[0][0][0]
+        self.mat = GCF.Util.combine(self, mats, kwargs, True)[0][0][0]
         mp.mp.dps = max(100, self.precision)
-        value = ContinuedFraction.Util.as_mpf(self.value)
-        if mp.almosteq(0, value):
+        val = self.value
+        if mp.almosteq(0, val):
             self.true_value = 0
         
         prec = self.precision
@@ -174,15 +194,15 @@ class ContinuedFraction:
             if not kwargs['no_exception']:
                 raise ex
         
-        if prec > 0:
-            rational, _ = poly_check([PreciseConstant(value, prec)], 1, 1, test_prec = MIN_PSLQ_DPS)
+        if prec > 0 and kwargs['rational_test']:
+            rational, _ = poly_check([PreciseConstant(val, prec)], 1, 1, test_prec = MIN_PSLQ_DPS)
             if rational:
                 self.true_value = mpq(rational[0], -rational[1])
         
-        return self._end_eval(value, prec, extras_list, kwargs)
+        return self._end_eval(val, prec, extras_list, kwargs)
 
 
-class PCF(ContinuedFraction):
+class PCF(GCF):
     '''
     a polynomial continued fraction, represented by two Polys a, b:
     a0 + b1 / (a1 + b2 / (a2 + b3 / (...)))
@@ -199,9 +219,14 @@ class PCF(ContinuedFraction):
     a: Poly
     b: Poly
     
+    def _auto_disable_dict(self, kwargs):
+        return {**super()._auto_disable_dict(kwargs),
+            'force_fr': kwargs.get('force_fr', False)
+        }
+    
     def _pre_eval(self):
-        self.a_coeffs = [mpz(x) for x in reversed(self.a.all_coeffs())]
-        self.b_coeffs = [mpz(x) for x in reversed(self.b.all_coeffs())]
+        self.a_coeffs = [mpz(x) for x in self.a.all_coeffs()]
+        self.b_coeffs = [mpz(x) for x in self.b.all_coeffs()]
     
     def _end_depth(self, extras_list, kwargs):
         if kwargs['force_fr']: # check convergence
@@ -212,47 +237,52 @@ class PCF(ContinuedFraction):
                 kwargs['depth'] *= 2
         return kwargs
     
-    def _end_eval(self, value, prec, extras_list, kwargs):
+    def _end_eval(self, val, prec, extras_list, kwargs):
         self.convergence = self.check_convergence(extras_list)
         if self.convergence == PCF.Convergence.NO_FR and not kwargs['no_exception'] and kwargs['force_fr']:
             raise NoFRException()
         
         return self
 
-    def _end_combine(self, mats, orig_len, force=False):
-        if force or orig_len - len(mats) > LOG_REDUCE_JUMP:
-            gcd = gmpy2.gcd(*[x for row in mats[-1][0] for x in row])
-            mats[-1] = (ContinuedFraction.Util.div_mat(mats[-1][0], gcd), mats[-1][1])
-        if force or orig_len - len(mats) > LOG_CALC_JUMP:
+    def _end_combine(self, mats, orig_len, kwargs, force=False):
+        log_reduce_jump = kwargs['log_reduce_jump']
+        if log_reduce_jump and (force or orig_len - len(mats) > log_reduce_jump):
+            g = gmpy2.gcd(*[x for row in mats[-1][0] for x in row])
+            mats[-1] = (GCF.Util.div_mat(mats[-1][0], g), mats[-1][1])
+        
+        log_calc_jump = kwargs['log_calc_jump']
+        if log_calc_jump and (force or orig_len - len(mats) > log_calc_jump):
             return mats, gmpy2.log(gmpy2.gcd(*mats[-1][0][0])) / self.depth + (len(self.a_coeffs) - 1) * (1 - gmpy2.log(self.depth))
         return mats, None
     
-    def __init__(self: PCF, a: Poly or List[int], b: Poly or List[int], mat: List[int] or None = None, depth: int = 0, auto_deflate: bool = True) -> None:
+    def __init__(self: PCF, a: Poly or List[int], b: Poly or List[int], mat: List[int] or None = None, init_depth: int = 0, auto_deflate: bool = True, qol: bool = True, **kwargs) -> None:
         '''
         a_coeffs, b_coeffs: lists of integers from the largest power to the smallest power.
         '''
-        self.a = a if isinstance(a, Poly) else Poly(a, n)
-        self.b = b if isinstance(b, Poly) else Poly(b, n)
+        self.a = Poly(a, n)
+        self.b = Poly(b, n)
         if self.a == 0 or self.b == 0:
             raise Exception('neither polynomial can be 0')
         if auto_deflate:
             self.deflate()
         self._pre_eval()
-        super().__init__(lambda n: _poly_eval(self.a_coeffs, n), lambda n: _poly_eval(self.b_coeffs, n), mat, depth)
-        self.eval_defaults['force_fr'] = True
+        super().__init__(lambda n: _poly_eval(self.a_coeffs, n), lambda n: _poly_eval(self.b_coeffs, n), mat, init_depth, qol, **kwargs)
+        self.eval_defaults['force_fr'] = kwargs.get('force_fr', True)
+        self.eval_defaults['log_calc_jump'] = kwargs.get('log_calc_jump', 7)
+        self.eval_defaults['log_reduce_jump'] = kwargs.get('log_reduce_jump', 6)
 
     def semi_canonical_form(self: PCF) -> Tuple(Poly, Poly):
         top = self.b # inflate everything by 1/an, so partial denominators become constant 1
         bot = self.a * self.a.compose(Poly(n - 1))
-        gcd = sgcd(top, bot)
-        return Poly(cancel(top / gcd), n), Poly(cancel(bot / gcd), n)
+        g = gcd(top, bot)
+        return Poly(cancel(top / g), n), Poly(cancel(bot / g), n)
 
     def canonical_form(self: PCF) -> Tuple(Poly, Poly):
         top, bot = self.semi_canonical_form() # start with the semi-canonical form (partial denominator series is constant 1)
         
         # the largest real part of the roots of top should be in (-1,0].
         # If top is constant, use the roots of bot instead
-        roots = [ceiling(re(r)) for r in top.all_roots()] or [ceiling(re(r)) for r in bot.all_roots()]
+        roots = list(_ceiling_roots(top)) or list(_ceiling_roots(bot))
 
         # If both are constants, just leave them as is
         if not roots:
@@ -269,7 +299,7 @@ class PCF(ContinuedFraction):
         return f'PCF[{self.a.expr}, {self.b.expr}]'
 
     def is_inflation(self: PCF) -> bool:
-        return sgcd(self.b, self.a * self.a.compose(Poly(n - 1))) != 1
+        return gcd(self.b, self.a * self.a.compose(Poly(n - 1))) != 1
 
     def deflate(self: PCF) -> None:
         def better_factor_list(p: Poly):
@@ -300,7 +330,7 @@ class PCF(ContinuedFraction):
         b = Poly(top, n) * a # then what remains of top/bot is top/bot * bot*bot(n+1), or just top*bot(n+1)
         return PCF(a, b) # the end result is PCF[bot(n+1),top*bot(n+1)], from here deflate and we're done!
     
-    def check_convergence(self: ContinuedFraction, fr_list) -> PCF.Convergence:
+    def check_convergence(self: GCF, fr_list) -> PCF.Convergence:
         if self.true_value != None:
             return PCF.Convergence.RATIONAL
         

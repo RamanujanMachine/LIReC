@@ -4,7 +4,7 @@ from collections import namedtuple
 from decimal import Decimal, getcontext
 from functools import reduce
 from itertools import combinations
-from sympy import sympify
+from sympy import Symbol, parse_expr
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.dialects import postgresql
@@ -72,6 +72,13 @@ class LIReC_DB:
                 self._recache()
             return self.cache[str(table)]
         return self.session.query(table).all()
+    
+    def _clear_cache(self):
+        self.cache = None # will recache next time
+    
+    def _remove_cache(self):
+        os.remove(self.cache_path) # will redownload the cache next time
+        self._clear_cache()
     
     def reconnect(self):
         if self.session:
@@ -184,7 +191,7 @@ class LIReC_DB:
         """
         return [PCF.from_canonical_form(c) for c in self.canonical_forms()]
 
-    def identify(self, values, degree=2, order=1, min_prec=None, max_prec=None, min_roi=2, isolate=None, first_step=True, wide_search=False, verbose=False):
+    def identify(self, values, degree=2, order=1, min_prec=None, min_roi=2, isolate=0, strict=False, wide_search=False, verbose=False):
         if not values: # SETUP - organize values
             return []
         numbers, named = {}, {}
@@ -192,7 +199,15 @@ class LIReC_DB:
             if isinstance(v, PreciseConstant):
                 numbers[i] = v
             else:
-                as_expr = sympify(str(v))
+                if not isinstance(v, str):
+                    try:
+                        numbers[i] = PreciseConstant(*v)
+                        continue
+                    except: # if can't unpack v (or PreciseConstant can't work with it), try something else
+                        pass
+                d = {}
+                exec('from sympy import Symbol, Integer, Float', d)
+                as_expr = parse_expr(str(v), global_dict=d) # sympy has its own predefined names via sympify... don't want!
                 if as_expr.free_symbols:
                     named[i] = as_expr
                 else:
@@ -201,27 +216,24 @@ class LIReC_DB:
                     try:
                         numbers[i] = PreciseConstant(v, len(str(v).replace('.','').rstrip('0')), f'c{i}')
                     except: # no free symbols but cannot turn into mpf means it involves only sympy constants. need min_prec later
-                        named[i] = as_expr
+                        named[i] = as_expr # TODO do we ever get here now?
         
         if not min_prec:
             min_prec = min(v.precision for v in numbers.values())
             cond_print(verbose, f'Notice: No minimal precision given, assuming {min_prec} accurate decimal digits')
         if min_prec < MIN_PSLQ_DPS: # too low for PSLQ to work in the usual way!
             cond_print(verbose, 'Notice: Precision too low. Switching to manual tolerance mode. Might get too many results.')
-        max_prec = max_prec if max_prec else min_prec * 2
         
-        if isolate:
-            if not named:
-                cond_print(verbose, "Warning: no named constants given! Don't know what to isolate for!")
-                isolate = None
-            elif len(named) > 1:
+        include_isolated = (len(values) > 1) # auto isolate one value!
+        if isolate != None and not (isolate is False):
+            if len(named) > 1:
                 cond_print(verbose, f'Notice: More than one named constant (or expression involving named constants) was given! Will isolate for {list(named)[0]}.')
             if order > 1:
                 cond_print(verbose, f'Notice: isolating when order > 1 can give weird results.')
         
         res = None
-        if first_step: # STEP 1 - try to PSLQ the numbers alone
-            res = check_consts(list(numbers.values()), degree, order, min_prec, min_roi, verbose)
+        if not strict: # STEP 1 - try to PSLQ the numbers alone
+            res = check_consts(list(numbers.values()), degree, order, min_prec, min_roi, False, verbose)
             if res:
                 cond_print(verbose, 'Found relation(s) between the given numbers without using the named constants!')
             elif not named and not wide_search:
@@ -232,18 +244,14 @@ class LIReC_DB:
             if named or wide_search:
                 cond_print(verbose, 'Querying database...')
                 names = [c for c in self._get_all(models.NamedConstant) if c.base.value and c.base.precision >= MIN_PSLQ_DPS]
-                if named:
-                    for k in named:
-                        precision = min(c.base.precision for c in names if sympify(c.name) in named[k].free_symbols) if named[k].free_symbols else len(str(named[k]).replace('.','').rstrip('0'))
-                        mp.mp.dps = max(precision, MIN_PSLQ_DPS)
-                        value = named[k].subs({c.name:mp.mpf(str(c.base.value)) for c in names}).evalf(mp.mp.dps) # sympy can ignore unnecessary variables
-                        numbers[k] = PreciseConstant(value, precision, f'({named[k]})')
+                for k in named:
+                    precision = min(c.base.precision for c in names if Symbol(c.name) in named[k].free_symbols) if named[k].free_symbols else len(str(named[k]).replace('.','').rstrip('0'))
+                    mp.mp.dps = max(precision, MIN_PSLQ_DPS)
+                    value = named[k].subs({c.name:mp.mpf(str(c.base.value)) for c in names}).evalf(mp.mp.dps) # sympy can ignore unnecessary variables
+                    numbers[k] = PreciseConstant(value, precision, f'({named[k]})')
                 cond_print(verbose, 'Query done. Finding relations...')
-                numbers = [numbers[k] for k in sorted(numbers)] # can flatten now, and everything will be in the original order still
-                
-                if named: # previous code only for wide_search later
-                    min_prec = min(v.precision for v in numbers)
-                    res = check_consts(numbers, degree, order, min_prec, min_roi, verbose)
+            numbers = [numbers[k] for k in sorted(numbers)] # can flatten now, and everything will be in the original order still
+            res = check_consts(numbers, degree, order, min_prec, min_roi, strict, verbose)
         
         if not res and wide_search: # STEP 3 - wide search
             try: # if it's a generator, convert it first
@@ -257,19 +265,22 @@ class LIReC_DB:
             for i in sizes:
                 cond_print(verbose, f'Searching subsets of size {i}')
                 for subset in combinations(consts, i):
+                    if any(c for c in subset if c.symbol=='C_10'): # TODO temporarily ignore champernowne, it's causing too many false positives
+                        continue
                     to_test = numbers + list(subset)
                     min_prec = min(v.precision for v in to_test)
-                    res = check_consts(to_test, degree, order, min_prec, min_roi, False) # too much printing!
+                    res = check_consts(to_test, degree, order, min_prec, min_roi, False, False) # too much printing!
                     res = [r for r in res if {c.symbol for c in r.constants} & original_symbols]
                     if res:
                         break
                 if res:
                     break
         
-        if isinstance(isolate, int) or (isolate and named):
-            isolate = isolate if isinstance(isolate, int) or isinstance(isolate, str) else named[0].symbol
+        if isolate != None and not (isolate is False): # need to differentiate between 0 and False
+            isolate = named[0].symbol if (isolate is True) and named else isolate
             for r in res:
                 r.isolate = isolate
+                r.include_isolated = include_isolated
         return res
 
 connection = DBConnection()

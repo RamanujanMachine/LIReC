@@ -3,7 +3,7 @@
 from logging import getLogger
 from logging.config import fileConfig
 import signal
-import numpy as np
+#import numpy as np
 import os
 import sys
 from LIReC.jobs.config import configuration
@@ -27,8 +27,8 @@ def main() -> None:
             getLogger(LOGGER_NAME).info(f'module {module_path} running times:')
             getLogger(LOGGER_NAME).info(f'min time: {min(timings)}')
             getLogger(LOGGER_NAME).info(f'max time: {max(timings)}')
-            getLogger(LOGGER_NAME).info(f'median time: {np.median(timings)}')
-            getLogger(LOGGER_NAME).info(f'average time: {np.average(timings)}')
+            #getLogger(LOGGER_NAME).info(f'median time: {np.median(timings)}')
+            #getLogger(LOGGER_NAME).info(f'average time: {np.average(timings)}')
         else:
             getLogger(LOGGER_NAME).info(f"module {module_path} didn't run! check logs")
         getLogger(LOGGER_NAME).info('-------------------------------------')

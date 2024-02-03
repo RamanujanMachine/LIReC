@@ -115,7 +115,7 @@ class Universal:
         if pcf.depth:
             prec = min(int(pcf.precision) + 10, 16000)
             const.base.precision = getcontext().prec = mp.mp.dps = prec
-            const.base.value = Decimal(str(ContinuedFraction.Util.as_mpf(pcf.true_value if pcf.true_value != None else pcf.value)))
+            const.base.value = Decimal(str(GCF.Util.as_mpf(pcf.true_value if pcf.true_value != None else pcf.value)))
             const.depth = pcf.depth
             if not minimalist: # last_matrix is a huge thing...
                 mat = [x for row in pcf.mat for x in row]

@@ -28,6 +28,7 @@ class PolyPSLQRelation:
     order: int
     coeffs: List[int]
     isolate: int or str or None # or Symbol
+    include_isolated: bool
     
     def __fix_isolate(self):
         # need isolate as a str eventually
@@ -35,12 +36,13 @@ class PolyPSLQRelation:
             self.isolate = (self.constants[self.isolate].symbol or f'c{self.isolate}') if self.isolate < len(self.constants) else None
         self.isolate = sympify(self.isolate) # will become a Symbol (or stay None if is None)
     
-    def __init__(self, consts, degree, order, coeffs, isolate=None):
+    def __init__(self, consts, degree, order, coeffs, isolate=None, include_isolated=True):
         self.constants = consts
         self.degree = degree
         self.order = order
         self.coeffs = coeffs
         self.isolate = isolate
+        self.include_isolated = include_isolated
     
     def __str__(self):
         exponents = get_exponents(self.degree, self.order, len(self.constants))
@@ -60,7 +62,8 @@ class PolyPSLQRelation:
         # so now the relation is (-num) + (denom) * isolate = 0, or isolate = num/denom!
         num = reduce(add, [-t for t in expr.args if self.isolate not in t.free_symbols], 0)
         denom = reduce(add, [t/self.isolate for t in expr.args if self.isolate in t.free_symbols], 0)
-        return f'{self.isolate} = {num/denom} ({self.precision})' # this will not be perfect if isolate appears with an exponent! will also be weird if either num or denom is 0
+        res = f'{num/denom} ({self.precision})' # this will not be perfect if isolate appears with an exponent! will also be weird if either num or denom is 0
+        return (f'{self.isolate} = ' + res) if self.include_isolated else res
 
     @property
     def precision(self):
@@ -107,8 +110,8 @@ def poly_check(consts, degree = None, order = None, exponents = None, test_prec 
             true_min = min(precs)
             tol = None
             if true_min < MIN_PSLQ_DPS: # otherwise let pslq automatically set tol
-                tol_offset = mp.floor(mp.log10(consts[precs.index(true_min)].value)) - max(mp.floor(mp.log10(abs(x))) for x in poly)
-                tol = mp.mpf(10)**(tol_offset - min(11,int(true_min)))
+                tol_offset = mp.floor(mp.log10(abs(consts[precs.index(true_min)].value))) - max(mp.floor(mp.log10(abs(x))) for x in poly)
+                tol = mp.mpf(10)**((tol_offset - min(11,int(true_min))) * PRECISION_RATIO)
             with mp.workdps(max(test_prec, MIN_PSLQ_DPS)): # intentionally low-resolution to quickly try something basic...
                 res = pslq(poly, tol, mp.inf, mp.inf, verbose)
             # don't know why, but when testing PSLQ on random vectors, the expected amount of total digits in the
@@ -190,17 +193,17 @@ def check_subrelations(relation: PolyPSLQRelation, test_prec=15, min_roi=2, extr
     # sometimes the relation can have no constants due to precision issues! this should catch it
     # also need to independently check if true_prec is significant when compared to the constants themselves,
     # since test_prec is typically much lower than the maximum reasonable precision
-    return subrelations if subrelations else [] if (not relation.constants or relation.precision < PRECISION_RATIO * min(c.precision for c in relation.constants)) else [relation]
+    return subrelations if subrelations else [] if not relation.constants else [relation]
 
-def check_consts(consts: List[PreciseConstant], degree=2, order=1, test_prec=15, min_roi=2, verbose=False):
+def check_consts(consts: List[PreciseConstant], degree=2, order=1, test_prec=15, min_roi=2, strict=False, verbose=False):
     min_order, max_order = 1, order # first "binary search" over the orders
     result, true_prec = [], -1
     while max_order > min_order:
         avg_order = (min_order + max_order) // 2
-        exponents = get_exponents(degree, order, len(consts)) # need later for compress_relation
+        exponents = get_exponents(degree, avg_order, len(consts)) # need later for compress_relation
         result, true_prec = poly_check(consts, degree, avg_order, exponents, test_prec, min_roi, verbose)
         if result:
-            relation = compress_relation(result, consts, exponents, degree, order)
+            relation = compress_relation(result, consts, exponents, degree, avg_order)
             consts, degree, max_order = relation.constants, relation.degree, relation.order
         else:
             min_order = avg_order + 1
@@ -214,7 +217,8 @@ def check_consts(consts: List[PreciseConstant], degree=2, order=1, test_prec=15,
             print(f'Found relation with precision ratio {true_prec / test_prec}')
     # now must check subrelations! PSLQ is only guaranteed to return a small norm,
     # but not guaranteed to return a 1-dimensional relation, see for example pslq([1,2,3])
-    return check_subrelations(compress_relation(result, consts, exponents, degree, order), test_prec, min_roi, [], verbose)
+    res = compress_relation(result, consts, exponents, degree, order)
+    return [res] if strict else check_subrelations(res, test_prec, min_roi, [], verbose)
 
 
 # ===== COPYPASTED FROM mpmath\identification.py WITH MODIFICATIONS =====
@@ -490,7 +494,6 @@ def pslq(x, tol=None, maxcoeff=1000, maxsteps=100, verbose=False):
         # "high quality" relation was detected. Reporting this to
         # the user somehow might be useful.
         best_err = mp.inf
-        best_i = 0
         for i in xrange(1, n+1):
             err = abs(y[i])
             # Maybe we are done?

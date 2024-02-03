@@ -26,6 +26,7 @@ import mpmath as mp
 from itertools import combinations, product
 from logging import getLogger
 from logging.config import fileConfig
+from math import ceil
 from os import getpid
 from sqlalchemy import or_
 from sqlalchemy.sql.expression import func
@@ -37,6 +38,9 @@ from LIReC.lib.pslq_utils import *
 from LIReC.jobs.job_poly_pslq_v2 import DualConstant, to_db_format # just gonna borrow this
 
 EXECUTE_NEEDS_ARGS = True
+KEEP_UNSPLIT = True
+SEND_INDEX = True
+
 DEBUG_PRINT_CONSTANTS = False
 
 ALGORITHM_NAME = 'POLYNOMIAL_PSLQ'
@@ -47,6 +51,7 @@ SUPPORTED_TYPES = ['Named', 'PcfCanonical', 'Derived', 'PowerOf']
 DEFAULT_CONST_COUNT = 1
 DEFAULT_DEGREE = 2
 DEFAULT_ORDER = 1
+ADDON_FAMILY = 'addon'
 
 FILTERS = [
         models.Constant.precision.isnot(None)
@@ -59,6 +64,7 @@ def get_filters(filters, const_type):
         global_filters = filters['global']
         if 'min_precision' in global_filters:
             filter_list += [models.Constant.precision >= global_filters['min_precision']]
+    
     if const_type == 'PcfCanonical':
         filter_list += [models.PcfCanonicalConstant.convergence != models.PcfConvergence.RATIONAL.value]
         if filters['PcfCanonical'].get('balanced_only', False):
@@ -70,15 +76,23 @@ def get_const_class(const_type):
     name = const_type + 'Constant'
     if name not in models.__dict__:
         raise ValueError(f'Unknown constant type {const_type}')
+    
     return models.__dict__[name]
 
 def get_consts(const_type, filters):
     if const_type == 'Named': # Constant first intentionally! don't need extra details, but want to filter still
-        return [DualConstant.from_db(c) for c in db.session.query(models.Constant).join(models.NamedConstant).order_by(models.NamedConstant.const_id).filter(*get_filters(filters, const_type))]
+        return [DualConstant.from_db(c) for c in db.session.query(models.Constant)
+                                                           .join(models.NamedConstant)
+                                                           .order_by(models.NamedConstant.const_id)
+                                                           .filter(*get_filters(filters, const_type))]
 
 def relation_is_new(consts, degree, order, other_relations):
     return not any(r for r in other_relations
                    if {c.const_id for c in r.constants} <= {c.orig.const_id for c in consts} and r.details[0] <= degree and r.details[1] <= order)
+
+def add_addons(consts, const_type, filters, all_addons):
+    addons = filters.get(const_type, {}).get('addons', [])
+    return consts + [DualConstant.from_db(a.base) for a in all_addons if a.args['name'] in addons]
 
 def run_query(filters=None, degree=None, order=None, bulk=None):
     fileConfig('LIReC/logging.config', defaults={'log_filename': 'pslq_const_manager'})
@@ -89,7 +103,12 @@ def run_query(filters=None, degree=None, order=None, bulk=None):
         return []
     bulk = bulk if bulk else BULK_SIZE
     getLogger(LOGGER_NAME).debug(f'Starting to check relations, using bulk size {bulk}')
-    results = {const_type:[c.const_id for c in db.session.query(models.Constant).join(get_const_class(const_type)).filter(*get_filters(filters, const_type)).order_by(func.random()).limit(bulk)] for const_type in bulk_types}
+    results = {const_type:[c.const_id for c in db.session.query(models.Constant)
+                                                         .join(get_const_class(const_type))
+                                                         .filter(*get_filters(filters, const_type))
+                                                         .order_by(func.random())
+                                                         .limit(bulk)] for const_type in bulk_types}
+    
     # apparently postgresql is really slow with the order_by(random) part,
     # but on 1000 CFs it only takes 1 second, which imo is worth it since
     # that allows us more variety in testing the CFs...
@@ -100,6 +119,7 @@ def run_query(filters=None, degree=None, order=None, bulk=None):
 def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, manual=False):
     try: # whole thing must be wrapped so it gets logged
         fileConfig('LIReC/logging.config', defaults={'log_filename': 'analyze_pcfs' if manual else f'pslq_const_worker_{getpid()}'})
+        i, total_cores, query_data = query_data # SEND_INDEX = True guarantees this
         global_filters = filters.get('global', {})
         filters.pop('global', 0) # instead of del so we can silently dispose of global even if it doesn't exist
         if not filters:
@@ -122,21 +142,40 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
             degree = total_consts * order
             getLogger(LOGGER_NAME).info(f'redundant degree detected! reducing to {degree}')
         
-        all_consts = db.session.query(models.Constant).all() # need to "internally refresh" the constants so they get committed right
-        subsets = [combinations([DualConstant.from_db(c) for c in all_consts if c.const_id in query_data[const_type]] if const_type in query_data else get_consts(const_type, {**filters, 'global':global_filters}), filters[const_type]['count']) for const_type in filters]
+        # need to "internally refresh" the constants so they get committed right
+        all_consts = db.session.query(models.Constant).all()
+        subsets = [] # unraveled the huge single-line code that used to be here...
+        for const_type in filters:
+            if const_type in query_data:
+                subsets += [(const_type, [DualConstant.from_db(c) for c in all_consts if c.const_id in query_data[const_type]])]
+            else:
+                subsets += [(const_type, get_consts(const_type, {**filters, 'global':global_filters}))]
+        
+        addons = db.session.query(models.DerivedConstant).filter(models.DerivedConstant.family == ADDON_FAMILY).all()
+        subsets = [list(combinations(add_addons(x, const_type, filters, addons), filters[const_type]['count'])) for const_type, x in subsets]
+        total_options = reduce(mul, [len(x) for x in subsets])
+        first, last = ceil((total_options * i) / total_cores), ceil((total_options * (i + 1)) / total_cores)
+        i = 0
         
         # TODO mass query the many-to-many table! the first call to relation_is_new takes too long!
         old_relations = db.session.query(models.Relation).filter(models.Relation.relation_type==ALGORITHM_NAME).all()
         orig_size = len(old_relations)
+        test_prec = global_filters.get('min_precision', 15)
         # even if the commented code were to be uncommented and implemented for
         # the scan_history table, this loop still can't be turned into list comprehension
         # because finding new relations depends on the new relations we found so far!
         for consts in product(*subsets):
+            if i >= last:
+                break
+            i += 1
+            if i < first:
+                continue
             consts = [c for t in consts for c in t] # need to flatten...
             if relation_is_new(consts, degree, order, old_relations):
                 if DEBUG_PRINT_CONSTANTS:
                     getLogger(LOGGER_NAME).debug(f'checking consts: {[c.orig.const_id for c in consts]}')
-                new_relations = [to_db_format(r) for r in check_consts(consts, degree, order)]
+                # some leeway with the extra 10 precision
+                new_relations = [to_db_format(r) for r in check_consts(consts, degree, order, test_prec) if r.precision > PRECISION_RATIO * min(c.precision for c in r.constants) - 10]
                 if new_relations:
                     getLogger(LOGGER_NAME).info(f'Found relation(s) on constants {[c.orig.const_id for c in consts]}!')
                     try_count = 1
@@ -171,6 +210,6 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
         # not returning anything so summarize_results can see the error
 
 def summarize_results(results):
-    if not all(results):
+    if any(r for r in results if r==None):
         getLogger(LOGGER_NAME).info(f'At least one of the workers had an exception! Check logs')
     getLogger(LOGGER_NAME).info(f'In total found {sum(r for r in results if r)} relations')

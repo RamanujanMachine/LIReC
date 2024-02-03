@@ -246,7 +246,7 @@ class LIReC_DB:
                 names = [c for c in self._get_all(models.NamedConstant) if c.base.value and c.base.precision >= MIN_PSLQ_DPS]
                 for k in named:
                     precision = min(c.base.precision for c in names if Symbol(c.name) in named[k].free_symbols) if named[k].free_symbols else len(str(named[k]).replace('.','').rstrip('0'))
-                    SETDPS(max(precision, MIN_PSLQ_DPS))
+                    mp.mp.dps = max(precision, MIN_PSLQ_DPS)
                     value = named[k].subs({c.name:mp.mpf(str(c.base.value)) for c in names}).evalf(mp.mp.dps) # sympy can ignore unnecessary variables
                     numbers[k] = PreciseConstant(value, precision, f'({named[k]})')
                 cond_print(verbose, 'Query done. Finding relations...')

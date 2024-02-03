@@ -10,7 +10,7 @@ from sympy import Poly, gcd, cancel, re, ceiling, factorint, RootOf
 from sympy.abc import n
 from time import time
 from typing import List, Tuple, Callable
-from LIReC.lib.pslq_utils import *
+from LIReC.lib.pslq_utils import poly_check, PreciseConstant, MIN_PSLQ_DPS
 CanonicalForm = Tuple[List[int], List[int]]
 
 def _poly_eval(poly: List, n):
@@ -151,7 +151,7 @@ class GCF:
         # and also less redundant (since we also want the value of the PCF instead of just discarding it for instance)
         self.true_value = None
         self._pre_eval()
-        SETDPS(100) # temporarily, to let the precision calculation work, will probably be increased later
+        mp.mp.dps = 100 # temporarily, to let the precision calculation work, will probably be increased later
         kwargs = {**self.eval_defaults, **kwargs}
         extras_list = []
         start = time()
@@ -183,7 +183,7 @@ class GCF:
                     raise kwargs
         
         self.mat = GCF.Util.combine(self, mats, kwargs, True)[0][0][0]
-        SETDPS(max(100, self.precision))
+        mp.mp.dps = max(100, self.precision)
         val = self.value
         if mp.almosteq(0, val):
             self.true_value = 0

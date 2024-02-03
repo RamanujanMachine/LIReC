@@ -5,9 +5,21 @@ from operator import mul, add, and_
 from typing import List
 import mpmath as mp
 from sympy import sympify, Symbol
+import sys
 
 MIN_PSLQ_DPS = 15
 PRECISION_RATIO = 0.75
+
+newer_python = True
+def SETDPS(dps): # returns previous dps
+    old = mp.mp.dps
+    mp.mp.dps = dps
+    if newer_python:
+        try:
+            sys.set_int_max_str_digits(dps) # newer python versions have this limitation
+        except:
+            newer_python = False # otherwise ignore forever
+    return old
 
 class PreciseConstant:
     value: mp.mpf
@@ -18,8 +30,9 @@ class PreciseConstant:
         self.precision = int(precision)
         # these values are intended to feed into PSLQ later, and if we try to initialize them with
         # less precision than the minimum with which PSLQ can work, it will cause problems
-        with mp.workdps(max(self.precision, MIN_PSLQ_DPS)):
-            self.value = mp.mpf(str(value))
+        old = SETDPS(max(self.precision, MIN_PSLQ_DPS))
+        self.value = mp.mpf(str(value))
+        SETDPS(old)
         self.symbol = symbol
 
 class PolyPSLQRelation:
@@ -81,14 +94,16 @@ def get_exponents(degree, order, total_consts):
             if not any(i for i in c.values() if i > order)]
 
 def poly_get(consts, exponents):
-    mp.mp.dps = max(min(c.precision for c in consts), MIN_PSLQ_DPS) # must be at least 15!
+    SETDPS(max(min(c.precision for c in consts), MIN_PSLQ_DPS)) # must be at least 15!
     values = [c.value for c in consts]
     return [reduce(mul, (values[i] ** exp[i] for i in range(len(values))), mp.mpf(1)) for exp in exponents]
 
 def poly_eval(poly, coeffs, precisions):
-    with mp.workdps(max(precisions) + 10):
-        min_prec = max(min(precisions), MIN_PSLQ_DPS)
-        return int(min(mp.floor(-mp.log10(abs(mp.fdot(poly, coeffs)))), min_prec))
+    old = SETDPS(max(precisions) + 10)
+    min_prec = max(min(precisions), MIN_PSLQ_DPS)
+    res = int(min(mp.floor(-mp.log10(abs(mp.fdot(poly, coeffs)))), min_prec))
+    SETDPS(old)
+    return res
 
 def poly_verify(consts, degree = None, order = None, relation = None, full_relation = None, exponents = None):
     if full_relation:
@@ -112,8 +127,9 @@ def poly_check(consts, degree = None, order = None, exponents = None, test_prec 
             if true_min < MIN_PSLQ_DPS: # otherwise let pslq automatically set tol
                 tol_offset = mp.floor(mp.log10(abs(consts[precs.index(true_min)].value))) - max(mp.floor(mp.log10(abs(x))) for x in poly)
                 tol = mp.mpf(10)**((tol_offset - min(11,int(true_min))) * PRECISION_RATIO)
-            with mp.workdps(max(test_prec, MIN_PSLQ_DPS)): # intentionally low-resolution to quickly try something basic...
-                res = pslq(poly, tol, mp.inf, mp.inf, verbose)
+            old = SETDPS(max(test_prec, MIN_PSLQ_DPS)) # intentionally low-resolution to quickly try something basic...
+            res = pslq(poly, tol, mp.inf, mp.inf, verbose)
+            SETDPS(old)
             # don't know why, but when testing PSLQ on random vectors, the expected amount of total digits in the
             # result is approximately the same as the working precision. this is the justification for calculating roi
             if res:
@@ -213,8 +229,9 @@ def check_consts(consts: List[PreciseConstant], degree=2, order=1, test_prec=15,
     if not result:
         return []
     if verbose:
-        with mp.workdps(5):
-            print(f'Found relation with precision ratio {true_prec / test_prec}')
+        old = SETDPS(5)
+        print(f'Found relation with precision ratio {true_prec / test_prec}')
+        SETDPS(old)
     # now must check subrelations! PSLQ is only guaranteed to return a small norm,
     # but not guaranteed to return a 1-dimensional relation, see for example pslq([1,2,3])
     res = compress_relation(result, consts, exponents, degree, order)

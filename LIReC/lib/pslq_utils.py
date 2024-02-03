@@ -16,7 +16,7 @@ def SETDPS(dps): # returns previous dps
     mp.mp.dps = dps
     if newer_python:
         try:
-            sys.set_int_max_str_digits(dps) # newer python versions have this limitation
+            sys.set_int_max_str_digits(dps + 100) # newer python versions have this limitation
         except:
             newer_python = False # otherwise ignore forever
     return old

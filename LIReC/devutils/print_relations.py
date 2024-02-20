@@ -1,6 +1,5 @@
 from __future__ import annotations
 from functools import reduce
-from itertools import groupby
 from operator import add
 from sympy import Poly, Symbol
 from typing import List
@@ -27,6 +26,15 @@ def expand(const, nameds, pcfs, derived):
         print(f'const {const.const_id} has no extension!')
     return res or const
 
+# the default groupby is very broken and i don't know why. this is a fix
+def groupby(iterable, key=None):
+    res = {}
+    for k, g in groupby(iterable, key=key):
+        if k not in res:
+            res[k] = []
+        res[k] += list(g)
+    return res.items()
+
 def main():
     keep_going = True# len(sys.argv) > 1
     print(f'printing relations one at a time in descending order of precision{"" if keep_going else ", press enter to print the next"}')
@@ -36,7 +44,8 @@ def main():
     nameds = {n.const_id:n for n in db.session.query(NamedConstant)}
     pcfs = {p.const_id:Explained(p) for p in db.session.query(PcfCanonicalConstant)}
     derived = {d.const_id:d for d in db.session.query(DerivedConstant)}
-    rels = [[rels[relation_id], [expand(consts[p[0]], nameds, pcfs, derived) for p in g]] for relation_id, g in groupby(db.session.query(constant_in_relation_table), lambda p:p[1])]
+    table = db.session.query(constant_in_relation_table).all()
+    rels = [[rels[relation_id], [expand(consts[p[0]], nameds, pcfs, derived) for p in g]] for relation_id, g in groupby(table, lambda p:p[1])]
     rels_vague = [x for x in rels if x[0].relation_type=='VAGUE']
     rels = [x for x in rels if x[0].relation_type!='VAGUE']
     print(f'query done')

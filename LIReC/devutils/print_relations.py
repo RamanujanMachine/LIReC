@@ -28,6 +28,7 @@ def expand(const, nameds, pcfs, derived):
 
 # the default groupby is very broken and i don't know why. this is a fix
 def groupby(iterable, key=None):
+    from itertools import groupby
     res = {}
     for k, g in groupby(iterable, key=key):
         if k not in res:

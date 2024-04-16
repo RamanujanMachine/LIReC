@@ -207,6 +207,12 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
         return len(old_relations) - orig_size
     except:
         getLogger(LOGGER_NAME).error(f'Exception in execute job: {format_exc()}')
+        # TODO "SSL connection has been closed unexpectedly" is a problem...
+        # this is just a bandaid fix to make sure the system doesn't shit itself,
+        # but we should instead figure out a way to be resistant to this and keep working normally.
+        # right now this will just cause the search job to restart itself without
+        # knowing where to return to. not great
+        db.session.rollback()
         # not returning anything so summarize_results can see the error
 
 def summarize_results(results):

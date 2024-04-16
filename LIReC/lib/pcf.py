@@ -72,25 +72,22 @@ class GCF:
     depth: int
     true_value: mpq or None
     
-    def __init__(self: GCF, a: Callable[[int], Any], b: Callable[[int], Any], mat: List[int] or None = None, init_depth: int = 0, qol: bool = True, **kwargs):
+    def __init__(self: GCF, a: Callable[[int], Any], b: Callable[[int], Any], mat: List[int] or None = None, init_depth: int = 0, **kwargs):
         self.a_func = a
         self.b_func = b
         self.mat = [mat[0:2], mat[2:4]] if mat else [[1, self.a_func(0)], [0, 1]]
         self.depth = init_depth
         self.true_value = None
         self.eval_defaults = {
-            'depth': 2 ** 13, # at this depth, calculation of one PCF is expected to take about 3 seconds, depending on your machine
-            'precision': 50,
+            'depth': 2 ** 10,
+            'precision': -mp.inf,
             'timeout_sec': 0,
-            'timeout_check_freq': 1024,
+            'timeout_check_freq': 2 ** 10,
             'no_exception': False,
-            'rational_test': True
+            'rational_test': True,
+            'max_depth': mp.inf
         }
         self.eval_defaults = {**self.eval_defaults, **kwargs}
-        if qol: # quality of life: if any one value in _auto_disable_dict is specified, zero out the others
-            d = self._auto_disable_dict(kwargs)
-            if any(d.values()):
-                self.eval_defaults = {**self.eval_defaults, **d}
     
     @property
     def value_rational_unreduced(self: GCF) -> Tuple(mpz, mpz):
@@ -108,13 +105,6 @@ class GCF:
     def precision(self: GCF) -> gmpy2.mpfr:
         to_compare = self.true_value if self.true_value != None else mpq(self.mat[0][0], self.mat[1][0])
         return gmpy2.floor(-gmpy2.log10(abs(self.value_rational - to_compare))) if all(self.mat[1]) else MAX_PREC
-    
-    def _auto_disable_dict(self, kwargs):
-        return {
-            'precision': kwargs.get('precision', 0),
-            'depth': kwargs.get('depth', 0),
-            'rational_test': kwargs.get('rational_test', False)
-        }
     
     def _pre_eval(self):
         pass
@@ -172,8 +162,8 @@ class GCF:
                     #if kwargs['no_exception']:
                     #    return ex
                     raise ex
-                if prec < kwargs['precision']:
-                    kwargs['depth'] *= 2
+                if prec < kwargs['precision'] and kwargs['depth'] < kwargs['max_depth']:
+                    kwargs['depth'] = min(2 * kwargs['depth'], kwargs['max_depth'])
                     continue
                 
                 kwargs = self._end_depth(extras_list, kwargs)
@@ -219,11 +209,6 @@ class PCF(GCF):
     a: Poly
     b: Poly
     
-    def _auto_disable_dict(self, kwargs):
-        return {**super()._auto_disable_dict(kwargs),
-            'force_fr': kwargs.get('force_fr', False)
-        }
-    
     def _pre_eval(self):
         self.a_coeffs = [mpz(x) for x in self.a.all_coeffs()]
         self.b_coeffs = [mpz(x) for x in self.b.all_coeffs()]
@@ -267,7 +252,7 @@ class PCF(GCF):
             self.deflate()
         self._pre_eval()
         super().__init__(lambda n: _poly_eval(self.a_coeffs, n), lambda n: _poly_eval(self.b_coeffs, n), mat, init_depth, qol, **kwargs)
-        self.eval_defaults['force_fr'] = kwargs.get('force_fr', True)
+        self.eval_defaults['force_fr'] = kwargs.get('force_fr', False)
         self.eval_defaults['log_calc_jump'] = kwargs.get('log_calc_jump', 7)
         self.eval_defaults['log_reduce_jump'] = kwargs.get('log_reduce_jump', 6)
 
@@ -282,7 +267,7 @@ class PCF(GCF):
         
         # the largest real part of the roots of top should be in (-1,0].
         # If top is constant, use the roots of bot instead
-        roots = list(_ceiling_roots(top)) or list(_ceiling_roots(bot))
+        roots = list(_ceiling_roots(top)) + list(_ceiling_roots(bot))
 
         # If both are constants, just leave them as is
         if not roots:
@@ -312,10 +297,19 @@ class PCF(GCF):
         common = {k:min(a_scalars[k],b_scalars[k]//2) for k in a_scalars}
         self.a = reduce(floordiv, [k ** common[k] for k in common], self.a)
         self.b = reduce(floordiv, [k ** (2 * common[k]) for k in common], self.b)
-        # then reduce polynomial factors
-        common = {k:min(a_subpolys[k],b_subpolys[k],b_subpolys[k.compose(Poly(n - 1))]) for k in a_subpolys}
-        self.a = reduce(floordiv, [k ** common[k] for k in common], self.a)
-        self.b = reduce(floordiv, [(k * k.compose(Poly(n - 1))) ** common[k] for k in common], self.b)
+        # then reduce polynomial factors, must do iteratively instead of with comprehension!
+        changed = True
+        while changed:
+            changed = False
+            for k in a_subpolys:
+                exp = min(a_subpolys[k],b_subpolys[k],b_subpolys[k.compose(Poly(n - 1))])
+                if exp > 0:
+                    self.a //= k ** exp
+                    self.b //= (k * k.compose(Poly(n-1))) ** exp
+                    _, a_subpolys = better_factor_list(self.a)
+                    _, b_subpolys = better_factor_list(self.b)
+                    changed = True
+                    break
     
     @staticmethod
     def from_canonical_form(canonical_form: CanonicalForm) -> PCF:

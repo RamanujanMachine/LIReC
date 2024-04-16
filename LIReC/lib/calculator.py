@@ -113,9 +113,11 @@ class Universal:
         const.P = [int(coef) for coef in top.all_coeffs()]
         const.Q = [int(coef) for coef in bot.all_coeffs()]
         if pcf.depth:
-            prec = min(int(pcf.precision) + 10, 16000)
+            prec = min(int(pcf.precision), 16000)
             const.base.precision = getcontext().prec = mp.mp.dps = prec
-            const.base.value = Decimal(str(GCF.Util.as_mpf(pcf.true_value if pcf.true_value != None else pcf.value)))
+            with mp.workdps(prec + 10):
+                v = mp.mpf(pcf.true_value.numerator) / pcf.true_value.denominator if pcf.true_value != None else pcf.value
+                const.base.value = Decimal(str(v))
             const.depth = pcf.depth
             if not minimalist: # last_matrix is a huge thing...
                 mat = [x for row in pcf.mat for x in row]

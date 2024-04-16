@@ -80,7 +80,7 @@ class GCF:
         self.true_value = None
         self.eval_defaults = {
             'depth': 2 ** 10,
-            'precision': -mp.inf,
+            'precision': -gmpy2.inf(),
             'timeout_sec': 0,
             'timeout_check_freq': 2 ** 10,
             'no_exception': False,
@@ -240,7 +240,7 @@ class PCF(GCF):
             return mats, gmpy2.log(gmpy2.gcd(*mats[-1][0][0])) / self.depth + (len(self.a_coeffs) - 1) * (1 - gmpy2.log(self.depth))
         return mats, None
     
-    def __init__(self: PCF, a: Poly or List[int], b: Poly or List[int], mat: List[int] or None = None, init_depth: int = 0, auto_deflate: bool = True, qol: bool = True, **kwargs) -> None:
+    def __init__(self: PCF, a: Poly or List[int], b: Poly or List[int], mat: List[int] or None = None, init_depth: int = 0, auto_deflate: bool = True, **kwargs) -> None:
         '''
         a_coeffs, b_coeffs: lists of integers from the largest power to the smallest power.
         '''
@@ -251,7 +251,7 @@ class PCF(GCF):
         if auto_deflate:
             self.deflate()
         self._pre_eval()
-        super().__init__(lambda n: _poly_eval(self.a_coeffs, n), lambda n: _poly_eval(self.b_coeffs, n), mat, init_depth, qol, **kwargs)
+        super().__init__(lambda n: _poly_eval(self.a_coeffs, n), lambda n: _poly_eval(self.b_coeffs, n), mat, init_depth, **kwargs)
         self.eval_defaults['force_fr'] = kwargs.get('force_fr', False)
         self.eval_defaults['log_calc_jump'] = kwargs.get('log_calc_jump', 7)
         self.eval_defaults['log_reduce_jump'] = kwargs.get('log_reduce_jump', 6)

@@ -51,7 +51,13 @@ class PolyPSLQRelation:
         # need isolate as a str eventually
         if isinstance(self.isolate, int):
             self.isolate = (self.constants[self.isolate].symbol or f'c{self.isolate}') if self.isolate < len(self.constants) else None
-        self.isolate = sympify(self.isolate) # will become a Symbol (or stay None if is None)
+        try: # will become a Symbol (or stay None if is None)
+            self.isolate = sympify(self.isolate)
+        except:
+            try: # try to force it into a symbol instead...
+                self.isolate = Symbol(self.isolate)
+            except:
+                pass
     
     def __init__(self, consts, degree, order, coeffs, isolate=None, include_isolated=True, confidence=None, ranges=None):
         self.constants = consts

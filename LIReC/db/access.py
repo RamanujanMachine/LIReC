@@ -20,6 +20,28 @@ from LIReC.lib.calculator import Universal
 from LIReC.lib.pcf import *
 from LIReC.lib.pslq_utils import *
 
+# the default itertools.groupby assumes the input is sorted according to the key.
+# this doesn't assume that and is faster than groupby(sorted(...)), though it requires
+# the output of key to be hashable...
+def groupby(iterable, key=lambda x:x):
+    from collections import defaultdict
+    d = defaultdict(list)
+    for item in iterable:
+        d[key(item)].append(item)
+    return d.items()
+
+# need to keep hold of the original db constant, but pslq_utils doesn't care for that so this is separate here
+class DualConstant(PreciseConstant):
+    orig: models.Constant
+    
+    def __init__(self, value, precision, orig, symbol=None):
+        self.orig = orig
+        super().__init__(value, precision, symbol)
+    
+    @staticmethod
+    def from_db(const: models.Constant):
+        return DualConstant(const.value, const.precision, const, Symbol(f'C_{const.const_id}'))
+
 class DBConnection:
     host: str
     port: int
@@ -52,7 +74,7 @@ class LIReC_DB:
         self.cache_path = str(Path(os.getcwd()) / 'lirec.cache')
         self.auto_recache_delay_sec = 60*60*24*7 # exactly one week
         self.cache = None
-        self.cached_tables = [models.Constant, models.NamedConstant]#, models.PcfCanonicalConstant] # for now not caching pcfs!
+        self.cached_tables = [models.Constant, models.NamedConstant, models.PcfCanonicalConstant, models.constant_in_relation_table, models.Relation]
         self.reconnect()
     
     def _redownload(self):
@@ -105,6 +127,23 @@ class LIReC_DB:
 
     def describe(self, name):
         return next((d for c, d in self.names_with_descriptions if c == name), None)
+    
+    def relations_with(self, name):
+        const = next((c for c in self.constants if c.name == name), None)
+        if not const:
+            return []
+        const = const.const_id
+        pcfs = {c.const_id:c for c in self.cfs}
+        relations = self.relations()
+        rels = [r for r in relations if const in [c.orig.const_id for c in r.constants] and len(r.constants) == 2 and any(c for c in r.constants if c.orig.const_id in pcfs)]
+        for r in rels:
+            for c in r.constants:
+                if c.orig.const_id == const:
+                    c.symbol = name
+                else:
+                    pcf = pcfs[c.orig.const_id]
+                    r.isolate = c.symbol = str(PCF.from_canonical_form((pcf.P, pcf.Q)))
+        return rels
 
     def add_pcf_canonical(self, pcf: PCF, minimalist=False) -> models.PcfCanonicalConstant:
         # TODO implement add_pcf_canonicals that uploads multiple at a time
@@ -177,12 +216,23 @@ class LIReC_DB:
             except IllegalPCFException:
                 pass
     
-    @staticmethod
-    def parse_cf_to_lists(cf: models.PcfCanonicalConstant) -> CanonicalForm:
-        return [int(coef) for coef in cf.P], [int(coef) for coef in cf.Q]
+    def canonical_forms(self) -> List[CanonicalForm]: # TODO fix the canonical forms in the db!
+        return [[[int(coef) for coef in pcf.P], [int(coef) for coef in pcf.Q]] for pcf in self.cfs]
     
-    def canonical_forms(self) -> List[CanonicalForm]:
-        return [LIReC_DB.parse_cf_to_lists(pcf) for pcf in self.cfs]
+    def canonize(self, first, second=None) -> PCF or None:
+        pcf = PCF(first, second) if second else first
+        top, bot = pcf.canonical_form()
+        top, bot = [[int(coef) for coef in top.all_coeffs()], [int(coef) for coef in bot.all_coeffs()]]
+        if [top, bot] in self.canonical_forms():
+            return PCF.from_canonical_form((top, bot))
+    
+    def relations_native(self, more=False) -> List[PolyPSLQRelation]:
+        consts = {c.const_id:DualConstant.from_db(c) for c in self._get_all(models.Constant) if c.value}
+        rels = {r.relation_id:r for r in self._get_all(models.Relation) if not more and r.relation_type == 'POLYNOMIAL_PSLQ'}
+        return [[rels[relation_id], [consts[p[0]] for p in g]] for relation_id, g in groupby(self._get_all(models.constant_in_relation_table), lambda p:p[1]) if relation_id in rels]
+        
+    def relations(self, more=False) -> List[PolyPSLQRelation]:
+        return [PolyPSLQRelation(x[1], x[0].details[0], x[0].details[1], x[0].details[2:]) for x in self.relations_native(more)]
     
     def get_actual_pcfs(self) -> List[PCF]:
         """
@@ -190,7 +240,7 @@ class LIReC_DB:
         """
         return [PCF.from_canonical_form(c) for c in self.canonical_forms()]
 
-    def identify(self, values, degree=2, order=1, min_prec=None, min_roi=2, isolate=0, strict=False, wide_search=False, verbose=False):
+    def identify(self, values, degree=2, order=1, min_prec=None, min_roi=2, isolate=0, strict=False, wide_search=False, see_also=False, verbose=False):
         if not values: # SETUP - organize values
             return []
         numbers, named = {}, {}
@@ -256,6 +306,7 @@ class LIReC_DB:
             numbers = [numbers[k] for k in sorted(numbers)] # can flatten now, and everything will be in the original order still
             res = check_consts(numbers, degree, order, min_prec, min_roi, strict, verbose)
         
+        extra = None
         if not res and wide_search: # STEP 3 - wide search
             try: # if it's a generator, convert it first
                 wide_search = set(wide_search)
@@ -275,6 +326,8 @@ class LIReC_DB:
                     res = check_consts(to_test, degree, order, min_prec, min_roi, False, False) # too much printing!
                     res = [r for r in res if {c.symbol for c in r.constants} & original_symbols]
                     if res:
+                        if see_also:
+                            extra = self.relations_with(subset[0].symbol)
                         break
                 if res:
                     break
@@ -284,7 +337,7 @@ class LIReC_DB:
             for r in res:
                 r.isolate = isolate
                 r.include_isolated = include_isolated
-        return res
+        return [res, extra] if extra else res
 
 connection = DBConnection()
 db = LIReC_DB()

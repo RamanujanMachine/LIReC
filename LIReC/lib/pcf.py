@@ -6,7 +6,7 @@ import gmpy2
 from gmpy2 import mpz, mpfr, xmpz, mpq
 import mpmath as mp
 from operator import floordiv
-from sympy import Poly, gcd, cancel, re, ceiling, factorint, RootOf
+from sympy import Poly, gcd, cancel, re, floor, factorint, RootOf
 from sympy.abc import n
 from time import time
 from typing import List, Tuple, Callable
@@ -22,7 +22,7 @@ def _poly_eval(poly: List, n):
         res = res * n + coeff
     return mpz(res)
 
-def _ceiling_roots(poly: Poly):
+def _floor_roots(poly: Poly):
     roots = poly.all_roots()
     for r in roots:
         if isinstance(r, RootOf):
@@ -30,7 +30,7 @@ def _ceiling_roots(poly: Poly):
             split = str(r).split('e+')
             if len(split) > 1:
                 r = r.n(int(split[1]) + 3) # evaluate enough digits
-        yield ceiling(re(r))
+        yield floor(re(r))
 
 FR_THRESHOLD = 0.1
 MAX_PREC = mpfr(99999)
@@ -267,12 +267,13 @@ class PCF(GCF):
         
         # the largest real part of the roots of top should be in (-1,0].
         # If top is constant, use the roots of bot instead
-        roots = list(_ceiling_roots(top)) + list(_ceiling_roots(bot))
+        roots = list(_floor_roots(top)) + list(_floor_roots(bot))
 
         # If both are constants, just leave them as is
         if not roots:
             return top, bot
-
+        
+        # after the shift, real part of every root must be less than 1, with at least one in the range [0,1)
         largest_root = max(roots)
         return top.compose(Poly(n + largest_root)), bot.compose(Poly(n + largest_root))
 

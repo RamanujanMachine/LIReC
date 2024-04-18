@@ -128,18 +128,21 @@ class LIReC_DB:
     def describe(self, name):
         return next((d for c, d in self.names_with_descriptions if c == name), None)
     
-    def relations_with(self, name):
+    def relations_with(self, name, max_degree=2, max_order=1):
         const = next((c for c in self.constants if c.name == name), None)
         if not const:
             return []
         const = const.const_id
         pcfs = {c.const_id:c for c in self.cfs}
+        names = {c.const_id:c.name for c in self.constants}
         relations = self.relations()
-        rels = [r for r in relations if const in [c.orig.const_id for c in r.constants] and len(r.constants) == 2 and any(c for c in r.constants if c.orig.const_id in pcfs)]
+        rels = [r for r in relations if const in [c.orig.const_id for c in r.constants]
+                                        and r.degree <= max_degree
+                                        and r.order <= max_order]
         for r in rels:
             for c in r.constants:
-                if c.orig.const_id == const:
-                    c.symbol = name
+                if c.orig.const_id in names:
+                    c.symbol = names[c.orig.const_id]
                 else:
                     pcf = pcfs[c.orig.const_id]
                     r.isolate = c.symbol = str(PCF.from_canonical_form((pcf.P, pcf.Q)))
@@ -327,7 +330,7 @@ class LIReC_DB:
                     res = [r for r in res if {c.symbol for c in r.constants} & original_symbols]
                     if res:
                         if see_also:
-                            extra = self.relations_with(subset[0].symbol)
+                            extra = self.relations_with(subset[0].symbol, degree, order)
                         break
                 if res:
                     break

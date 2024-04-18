@@ -104,8 +104,7 @@ class LIReC_DB:
         return self._get_all(models.PcfCanonicalConstant)
 
     def describe(self, name):
-        match = [d for c,d in self.names_with_descriptions if c==name]
-        return match[0] if match else None
+        return next((d for c, d in self.names_with_descriptions if c == name), None)
 
     def add_pcf_canonical(self, pcf: PCF, minimalist=False) -> models.PcfCanonicalConstant:
         # TODO implement add_pcf_canonicals that uploads multiple at a time
@@ -214,7 +213,7 @@ class LIReC_DB:
                     if isinstance(v, float):
                         cond_print(verbose, "Warning: Python's default float type suffers from rounding errors and limited precision! Try inputting values as string or mpmath.mpf (or pslq_utils.PreciseConstant) for better results.")
                     try:
-                        numbers[i] = PreciseConstant(v, len(str(v).replace('.','').rstrip('0')), f'c{i}')
+                        numbers[i] = PreciseConstant(v, max(min_prec or 0, len(str(v).replace('.','').rstrip('0'))), f'c{i}')
                     except: # no free symbols but cannot turn into mpf means it involves only sympy constants. need min_prec later
                         named[i] = as_expr # TODO do we ever get here now?
         
@@ -263,7 +262,7 @@ class LIReC_DB:
             except:
                 pass
             consts = [PreciseConstant(c.base.value, c.base.precision, c.name) for c in names]
-            sizes = sorted(wide_search) if isinstance(wide_search, set) else range(1, len(consts))
+            sizes = sorted(wide_search) if isinstance(wide_search, set) else [1] # no more unbounded searches!
             original_symbols = {n.symbol for n in numbers}
             cond_print(verbose, 'Wide search beginning (PSLQ verbose prints are suppressed during the wide search!)')
             for i in sizes:

@@ -1,4 +1,5 @@
 from collections import Counter
+from enum import Enum
 from functools import reduce
 from itertools import chain, combinations, combinations_with_replacement, count, takewhile
 from operator import mul, add, and_
@@ -14,6 +15,14 @@ try: # just disable it
     sys.set_int_max_str_digits(0)
 except:
     pass
+
+class Confidence(Enum):
+    No = 0
+    Minimal = 1
+    Moderate = 2
+    High = 3
+    Extreme = 4
+    Theorem = 5
 
 class PreciseConstant:
     value: mp.mpf
@@ -35,6 +44,8 @@ class PolyPSLQRelation:
     coeffs: List[int]
     isolate: int or str or None # or Symbol
     include_isolated: bool
+    _confidence: Confidence or None
+    ranges: List[mp.mpf]
     
     def __fix_isolate(self):
         # need isolate as a str eventually
@@ -42,13 +53,15 @@ class PolyPSLQRelation:
             self.isolate = (self.constants[self.isolate].symbol or f'c{self.isolate}') if self.isolate < len(self.constants) else None
         self.isolate = sympify(self.isolate) # will become a Symbol (or stay None if is None)
     
-    def __init__(self, consts, degree, order, coeffs, isolate=None, include_isolated=True):
+    def __init__(self, consts, degree, order, coeffs, isolate=None, include_isolated=True, confidence=None, ranges=None):
         self.constants = consts
         self.degree = degree
         self.order = order
         self.coeffs = coeffs
         self.isolate = isolate
         self.include_isolated = include_isolated
+        self._confidence = confidence
+        self.ranges = ranges or [mp.mpf('1.25'), mp.mpf('1.5'), mp.mpf(2), mp.mpf(3)]
     
     def __str__(self):
         exponents = get_exponents(self.degree, self.order, len(self.constants))
@@ -74,7 +87,26 @@ class PolyPSLQRelation:
     @property
     def precision(self):
         return poly_eval(poly_get(self.constants, get_exponents(self.degree, self.order, len(self.constants))), self.coeffs, [c.precision for c in self.constants])
-
+    
+    @property
+    def roi(self):
+        substance = sum(0 if not x else len(str(abs(x))) for x in self.coeffs)
+        return self.precision / substance
+    
+    @property
+    def confidence(self):
+        if self._confidence:
+            return self._confidence
+        roi = self.roi
+        if roi < self.ranges[0]:
+            return Confidence.No
+        if roi < self.ranges[1]:
+            return Confidence.Minimal
+        if roi < self.ranges[2]:
+            return Confidence.Moderate
+        if roi < self.ranges[3]:
+            return Confidence.High
+        return Confidence.Extreme
 
 def cond_print(verbose, m):
     if verbose:
@@ -123,11 +155,12 @@ def poly_check(consts, degree = None, order = None, exponents = None, test_prec 
             # don't know why, but when testing PSLQ on random vectors, the expected amount of total digits in the
             # result is approximately the same as the working precision. this is the justification for calculating roi
             if res:
-                substance = sum(0 if not x else len(str(abs(x))) for x in res)
-                if test_prec >= min_roi * substance:
-                    return res, poly_eval(poly, res, [c.precision for c in consts])
+                res = PolyPSLQRelation(consts, degree, order, res)
+                roi = res.roi
+                if roi >= min_roi:
+                    return res
                 elif verbose:
-                    print(f'GARBAGE RELATION FOUND. substance={substance}')
+                    print(f'GARBAGE RELATION FOUND. roi={roi} < min_roi={min_roi}')
     except ValueError:
         # one of the constants has too small precision, or one constant
         # is small enough that another constant is smaller than its precision.
@@ -135,7 +168,7 @@ def poly_check(consts, degree = None, order = None, exponents = None, test_prec 
         # TODO for now assuming that the latter case (one constant is smaller than another constant's precision) doesn't happen,
         # solve this later by normalizing everything or something
         pass
-    return None, None
+    return None
 
 def compress_relation(result, consts, exponents, degree, order, verbose=False):
     # will need to use later, so evaluating into lists
@@ -191,9 +224,9 @@ def check_subrelations(relation: PolyPSLQRelation, test_prec=15, min_roi=2, extr
         for subset in combinations(relation.constants, i):
             if combination_is_old(subset, relation.degree, relation.order, subrelations + extra_relations):
                 continue
-            subresult, _ = poly_check(subset, relation.degree, relation.order, exponents, test_prec, min_roi, verbose)
+            subresult = poly_check(subset, relation.degree, relation.order, exponents, test_prec, min_roi, verbose)
             if subresult:
-                subresult = compress_relation(subresult, list(subset), exponents, relation.degree, relation.order)
+                subresult = compress_relation(subresult.coeffs, list(subset), exponents, relation.degree, relation.order)
                 if subresult.precision >= PRECISION_RATIO * min(c.precision for c in subresult.constants):
                     subrelations += [subresult]
     # sometimes the relation can have no constants due to precision issues! this should catch it
@@ -207,17 +240,19 @@ def check_consts(consts: List[PreciseConstant], degree=2, order=1, test_prec=15,
     while max_order > min_order:
         avg_order = (min_order + max_order) // 2
         exponents = get_exponents(degree, avg_order, len(consts)) # need later for compress_relation
-        result, true_prec = poly_check(consts, degree, avg_order, exponents, test_prec, min_roi, verbose)
-        if result:
+        rel = poly_check(consts, degree, avg_order, exponents, test_prec, min_roi, verbose)
+        if rel:
+            result, true_prec = rel.coeffs, rel.precision
             relation = compress_relation(result, consts, exponents, degree, avg_order)
             consts, degree, max_order = relation.constants, relation.degree, relation.order
         else:
             min_order = avg_order + 1
     # now min_order == max_order == avg_order, and either the minimal order has been found, or no relation exists
     exponents = get_exponents(degree, order, len(consts))
-    result, true_prec = poly_check(consts, degree, min_order, exponents, test_prec, min_roi, verbose)
-    if not result:
+    rel = poly_check(consts, degree, min_order, exponents, test_prec, min_roi, verbose)
+    if not rel:
         return []
+    result, true_prec = rel.coeffs, rel.precision
     if verbose:
         with mp.workdps(5):
             print(f'Found relation with precision ratio {true_prec / test_prec}')

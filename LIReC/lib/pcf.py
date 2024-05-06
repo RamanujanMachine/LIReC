@@ -185,9 +185,9 @@ class GCF:
                 raise ex
         
         if prec > 0 and kwargs['rational_test']:
-            rational, _ = poly_check([PreciseConstant(val, prec)], 1, 1, test_prec = MIN_PSLQ_DPS)
+            rational = poly_check([PreciseConstant(val, prec)], 1, 1, test_prec = MIN_PSLQ_DPS)
             if rational:
-                self.true_value = mpq(rational[0], -rational[1])
+                self.true_value = mpq(rational.coeffs[0], -rational.coeffs[1])
         
         return self._end_eval(val, prec, extras_list, kwargs)
 

@@ -1,0 +1,16 @@
+<!-- This file is a necessary component to a BOINC app version -->
+<version>
+	<file>
+        <physical_name>{{WRAPPER}}</physical_name>
+        <main_program/>
+    </file>
+    <file>
+        <physical_name>job.{{VERSION}}-{{PLATFORM}}.xml</physical_name>
+        <logical_name>job.xml</logical_name>
+    </file>
+    <file>
+        <physical_name>app.{{VERSION}}-{{PLATFORM}}.zip</physical_name>
+        <logical_name>app.zip</logical_name>
+    </file>
+    <is_wrapper/>
+</version>

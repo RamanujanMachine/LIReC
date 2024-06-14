@@ -1,0 +1,125 @@
+name: 'Build and Deploy to BOINC Server'
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: true
+
+jobs:
+
+  define-version:
+    uses: ./.github/workflows/identify_target_version.yml
+    with:
+      # we use the description to fetch the latest version of the app from the BOINC server apps page
+      boinc_app_description: ${{ vars.APP_DESCRIPTION }}
+
+  generate-freeze-config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Checkout repository"
+        # https://github.com/actions/checkout
+        uses: actions/checkout@v4
+      - name: "Create cxFreeze config file"
+        env:
+          EXECUTABLE: ${{ vars.EXECUTABLE }}
+          APP_DESCRIPTION: ${{ vars.APP_DESCRIPTION }}
+        run: |
+          sed -e "s/{EXECUTABLE}/$EXECUTABLE/g" -e "s/{APP_DESCRIPTION}/$APP_DESCRIPTION/g" boinc/freeze_config_template.py > freeze_config.py
+      - name: "Upload cxFreeze config artifact"
+        uses: actions/upload-artifact@v4
+        with:
+            name: freeze_config.py
+            path: freeze_config.py
+            overwrite: true
+
+  build-binaries:
+    needs: [generate-freeze-config]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      matrix:
+        runner:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+        include:
+          - runner: ubuntu-latest
+            # we use this platform string to make our download artifacts unique for the same version across platforms
+            platform: 'linux'
+          - runner: windows-latest
+            # we use this platform string to make our download artifacts unique for the same version across platforms
+            platform: 'win'
+          - runner: macos-latest
+            # we use this platform string to make our download artifacts unique for the same version across platforms
+            platform: 'mac'
+    steps:
+      - name: "Checkout repository"
+        # https://github.com/actions/checkout
+        uses: actions/checkout@v4
+      - name: "Configure python"
+        # https://github.com/actions/setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11.7"
+      - name: "Install dependencies and cxFreeze"
+        run: |
+            pip install -e .
+            pip install --upgrade cx_Freeze
+      - name: "Download previously created freeze configuration"
+        uses: actions/download-artifact@v4
+        with:
+          name: freeze_config.py
+      - name: "Build binary"
+        run: | # See https://cx-freeze.readthedocs.io/en/stable/script.html#script
+           cat freeze_config.py
+           python freeze_config.py build
+      - name: "Upload cxFreeze binaries"
+        uses: actions/upload-artifact@v4
+        with:
+            name: ${{ matrix.platform }}
+            path: build/executable
+            overwrite: true
+
+  bundle-and-deploy:
+    needs: [define-version, build-binaries]
+    uses: ./.github/workflows/bundle_app.yml
+    secrets: inherit
+    with:
+      new_version: ${{ needs.define-version.outputs.new_version }}
+      platform: ${{ matrix.platform }}
+      wrapper: ${{ matrix.wrapper }}
+      boinc_platform: ${{ matrix.boinc_platform }}
+      executable: ${{ vars.EXECUTABLE }}
+      app_dir: ${{ vars.APP_DIR }}
+    strategy:
+      matrix:
+        platform:
+          - linux
+          - mac
+          - win
+        include:
+        - platform: 'linux'
+          # These wrappers come from BOINC and should be watched for newer versions: https://boinc.berkeley.edu/dl/?C=M;O=D
+          wrapper: 'wrapper_26002_x86_64-pc-linux-gnu'
+          boinc_platform: 'x86_64-pc-linux-gnu'
+        - platform: 'win'
+          wrapper: 'wrapper_26016_windows_x86_64'
+          boinc_platform: 'windows_x86_64'
+        - platform: 'mac'
+          wrapper: 'wrapper_26017_universal-apple-darwin'
+          boinc_platform: 'arm64-apple-darwin'
+
+  cleanup:
+    needs: [bundle-and-deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: geekyeggo/delete-artifact@v5
+        with:
+          name: |
+            version
+            freeze_config.py
+            linux
+            mac
+            win
+          failOnError: false

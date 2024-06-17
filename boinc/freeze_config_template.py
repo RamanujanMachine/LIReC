@@ -12,7 +12,7 @@ build_options = {'packages': [],
 base = 'console'
 
 executables = [
-    Executable('execute_from_json.py', base='console', target_name='{EXECUTABLE}')
+    Executable('run_lirec.py', base='console', target_name='{EXECUTABLE}')
 ]
 
 setup(name='{EXECUTABLE}',

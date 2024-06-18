@@ -231,11 +231,11 @@ class LIReC_DB:
     
     def relations_native(self, more=False) -> List[PolyPSLQRelation]:
         consts = {c.const_id:DualConstant.from_db(c) for c in self._get_all(models.Constant) if c.value}
-        rels = {r.relation_id:r for r in self._get_all(models.Relation) if not more and r.relation_type == 'POLYNOMIAL_PSLQ'}
+        rels = {r.relation_id:r for r in self._get_all(models.Relation) if more or r.relation_type == 'POLYNOMIAL_PSLQ'}
         return [[rels[relation_id], [consts[p[0]] for p in g]] for relation_id, g in groupby(self._get_all(models.constant_in_relation_table), lambda p:p[1]) if relation_id in rels]
         
-    def relations(self, more=False) -> List[PolyPSLQRelation]:
-        return [PolyPSLQRelation(x[1], x[0].details[0], x[0].details[1], x[0].details[2:]) for x in self.relations_native(more)]
+    def relations(self) -> List[PolyPSLQRelation]:
+        return [PolyPSLQRelation(x[1], x[0].details[0], x[0].details[1], x[0].details[2:]) for x in self.relations_native()]
     
     def get_actual_pcfs(self) -> List[PCF]:
         """
@@ -246,9 +246,11 @@ class LIReC_DB:
     def identify(self, values, degree=2, order=1, min_prec=None, min_roi=2, isolate=0, strict=False, wide_search=False, see_also=False, verbose=False):
         if not values: # SETUP - organize values
             return []
-        numbers, named = {}, {}
+        numbers, named, pcfs = {}, {}, {}
         for i,v in enumerate(values): # first iteration: detect expressions
-            if isinstance(v, PreciseConstant):
+            if isinstance(v, PCF):
+                pcfs[i] = v
+            elif isinstance(v, PreciseConstant):
                 numbers[i] = v
             else:
                 if not isinstance(v, str):
@@ -271,7 +273,7 @@ class LIReC_DB:
                         named[i] = as_expr # TODO do we ever get here now?
         
         if not min_prec:
-            min_prec = min(v.precision for v in numbers.values())
+            min_prec = min(v.precision for v in numbers.values()) if numbers else 50
             cond_print(verbose, f'Notice: No minimal precision given, assuming {min_prec} accurate decimal digits')
         if min_prec < MIN_PSLQ_DPS: # too low for PSLQ to work in the usual way!
             cond_print(verbose, 'Notice: Precision too low. Switching to manual tolerance mode. Might get too many results.')
@@ -282,6 +284,17 @@ class LIReC_DB:
                 cond_print(verbose, f'Notice: More than one named constant (or expression involving named constants) was given! Will isolate for {list(named)[0]}.')
             if order > 1:
                 cond_print(verbose, f'Notice: isolating when order > 1 can give weird results.')
+        
+        # try to autocalc pcfs, ignore pcfs that don't converge or converge too slowly
+        for i in pcfs:
+            if pcfs[i].depth == 0 or pcfs[i].precision < min_prec: # can accept PCFs that were already calculated, but that's up to you...
+                predict = pcfs[i].predict_depth(min_prec)
+                if not predict or predict > 2 ** 20:
+                    cond_print(verbose, f'{pcfs[i]} either doesn\'t converge, or converges too slowly. Will be ignored!')
+                else:
+                    cond_print(verbose, f'Autocalculating {pcfs[i]}...')
+                    pcfs[i] = pcfs[i].eval(depth=predict,precision=min_prec)
+                    numbers[i] = PreciseConstant(pcfs[i].value, pcfs[i].precision, f'c{i}')
         
         res = None
         if not strict: # STEP 1 - try to PSLQ the numbers alone

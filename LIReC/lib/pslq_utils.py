@@ -92,12 +92,18 @@ class PolyPSLQRelation:
 
     @property
     def precision(self):
-        return poly_eval(poly_get(self.constants, get_exponents(self.degree, self.order, len(self.constants))), self.coeffs, [c.precision for c in self.constants])
+        return poly_eval(poly_get(self.constants, get_exponents(self.degree, self.order, len(self.constants))),
+                         self.coeffs, [c.precision for c in self.constants])
+    
+    @property
+    def precision_binary(self):
+        return poly_eval(poly_get(self.constants, get_exponents(self.degree, self.order, len(self.constants))),
+                         self.coeffs, [c.precision for c in self.constants], 2)
     
     @property
     def roi(self):
-        substance = sum(0 if not x else len(str(abs(x))) for x in self.coeffs)
-        return self.precision / substance
+        substance = len([x for x in self.coeffs if x]) + sum(x.bit_length() for x in self.coeffs)
+        return self.precision_binary / substance
     
     @property
     def confidence(self):
@@ -129,10 +135,10 @@ def poly_get(consts, exponents):
     values = [c.value for c in consts]
     return [reduce(mul, (values[i] ** exp[i] for i in range(len(values))), mp.mpf(1)) for exp in exponents]
 
-def poly_eval(poly, coeffs, precisions):
+def poly_eval(poly, coeffs, precisions, base=10):
     with mp.workdps(max(precisions) + 10):
-        min_prec = max(min(precisions), MIN_PSLQ_DPS)
-        return int(min(mp.floor(-mp.log10(abs(mp.fdot(poly, coeffs)))), min_prec))
+        min_prec = max(min(precisions), MIN_PSLQ_DPS) if base==10 else mp.inf
+        return int(min(mp.floor(-mp.log(abs(mp.fdot(poly, coeffs)), base)), min_prec))
 
 def poly_verify(consts, degree = None, order = None, relation = None, full_relation = None, exponents = None):
     if full_relation:

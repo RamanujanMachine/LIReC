@@ -6,7 +6,7 @@ import gmpy2
 from gmpy2 import mpz, mpfr, xmpz, mpq
 import mpmath as mp
 from operator import floordiv
-from sympy import Poly, gcd, cancel, re, floor, factorint, RootOf
+from sympy import Poly, gcd, cancel, re, floor, factorint, RootOf, limit_seq
 from sympy.abc import n
 from time import time
 from typing import List, Tuple, Callable
@@ -31,6 +31,22 @@ def _floor_roots(poly: Poly):
             if len(split) > 1:
                 r = r.n(int(split[1]) + 3) # evaluate enough digits
         yield floor(re(r))
+
+def _laurent(ex, terms=2):
+    res, p = [], 2 # don't care for laurents that are too big
+    while terms:
+        coeff = limit_seq(ex / n**p)
+        if coeff:
+            if coeff.is_infinite:
+                res += [[1, p + 1]]
+                break
+            terms -= 1
+            res += [[coeff, p]]
+            ex = cancel(ex - coeff * n**p) # slightly more efficient than simplify
+        if not ex:
+            break
+        p -= 1
+    return res
 
 FR_THRESHOLD = 0.1
 MAX_PREC = mpfr(99999)
@@ -75,7 +91,9 @@ class GCF:
     def __init__(self: GCF, a: Callable[[int], Any], b: Callable[[int], Any], mat: List[int] or None = None, init_depth: int = 0, **kwargs):
         self.a_func = a
         self.b_func = b
-        self.mat = [mat[0:2], mat[2:4]] if mat else [[1, self.a_func(0)], [0, 1]]
+        # this choice of initial matrix will compute the value of the semi-canonical form instead! intentional!
+        a0 = self.a_func(0)
+        self.mat = [mat[0:2], mat[2:4]] if mat else [[1, a0], [0, a0]]
         self.depth = init_depth
         self.true_value = None
         self.eval_defaults = {
@@ -103,7 +121,13 @@ class GCF:
     
     @property
     def precision(self: GCF) -> gmpy2.mpfr:
-        to_compare = self.true_value if self.true_value != None else mpq(self.mat[0][0], self.mat[1][0])
+        to_compare = self.true_value
+        if not to_compare:
+            try:
+                to_compare = mpq(self.mat[0][0], self.mat[1][0])
+            except:
+                to_compare = self.mat[0][0] / self.mat[1][0]
+        
         return gmpy2.floor(-gmpy2.log10(abs(self.value_rational - to_compare))) if all(self.mat[1]) else MAX_PREC
     
     def _pre_eval(self):
@@ -250,6 +274,8 @@ class PCF(GCF):
             raise Exception('neither polynomial can be 0')
         if auto_deflate:
             self.deflate()
+        # canonize!
+        self.a, self.b = PCF.canonical_form_to_a_b(self.canonical_form())
         self._pre_eval()
         super().__init__(lambda n: _poly_eval(self.a_coeffs, n), lambda n: _poly_eval(self.b_coeffs, n), mat, init_depth, **kwargs)
         self.eval_defaults['force_fr'] = kwargs.get('force_fr', False)
@@ -313,6 +339,13 @@ class PCF(GCF):
                     break
     
     @staticmethod
+    def canonical_form_to_a_b(canonical_form: CanonicalForm):
+        top, bot = canonical_form
+        a = Poly(bot, n).compose(Poly(n + 1)) # inflate everything by bot(n+1)
+        b = Poly(top, n) * a # then what remains of top/bot is top/bot * bot*bot(n+1), or just top*bot(n+1)
+        return a, b # the end result is PCF[bot(n+1),top*bot(n+1)], from here deflate and we're done!
+    
+    @staticmethod
     def from_canonical_form(canonical_form: CanonicalForm) -> PCF:
         '''
         Receive the canonical form of a pcf (an := 1 ; bn := top/bot)
@@ -320,10 +353,7 @@ class PCF(GCF):
         Notice there may be many pcfs that fit the same canonical form, this returns just one of them.
         TODO: add link to the doc which explains this
         '''
-        top, bot = canonical_form
-        a = Poly(bot, n).compose(Poly(n + 1)) # inflate everything by bot(n+1)
-        b = Poly(top, n) * a # then what remains of top/bot is top/bot * bot*bot(n+1), or just top*bot(n+1)
-        return PCF(a, b) # the end result is PCF[bot(n+1),top*bot(n+1)], from here deflate and we're done!
+        return PCF(*PCF.canonical_form_to_a_b(canonical_form))
     
     def check_convergence(self: GCF, fr_list) -> PCF.Convergence:
         if self.true_value != None:
@@ -336,3 +366,36 @@ class PCF(GCF):
             return PCF.Convergence.NO_FR
         
         return PCF.Convergence.INDETERMINATE_FR
+    
+    def predict_error(self: PCF, depth: int) -> mp.mpf:
+        top, bot = self.canonical_form()
+        laurent = _laurent(1+4*top/bot)
+        if laurent[0] == [1, 0]: # factorial convergence
+            return mp.factorial(depth) ** laurent[1][1]
+        if laurent[0][1] == 0: # exponential convergence
+            sqrtC = mp.sqrt(laurent[0][0])
+            return abs((1+sqrtC)/(1-sqrtC)) ** -depth
+        if laurent[0][1] == 1: # esqrt convergence
+            return mp.exp(-4 * mp.sqrt(depth / laurent[0][0]))
+        return None # no known convergence formula here!
+    
+    def predict_precision(self: PCF, depth: int) -> mp.mpf:
+        return mp.floor(-mp.log10(self.predict_error(depth)))
+    
+    def predict_depth(self: PCF, precision: mp.mpf, is_error: bool = False) -> mp.mpf:
+        error = mp.mpf(precision)
+        if not is_error:
+            error = 10 ** -error
+        
+        top, bot = self.canonical_form()
+        laurent = _laurent(1+4*top/bot)
+        if laurent[0] == [1, 0]: # factorial convergence
+            # wikipedia's asymptotic formula for inverse factrorial, usually slightly pessimistic in practice so it's good enough
+            temp = mp.ln(mp.root(error, laurent[1][1]) / mp.sqrt(2 * mp.pi))
+            return mp.ceil(mp.mpf(1) / 2 + temp / mp.lambertw(mp.exp(-1) * temp))
+        if laurent[0][1] == 0: # exponential convergence
+            sqrtC = mp.sqrt(laurent[0][0])
+            return mp.ceil(-mp.ln(error) / mp.ln(abs((1+sqrtC)/(1-sqrtC))))
+        if laurent[0][1] == 1: # esqrt convergence
+            return mp.ceil(mp.ln(error) ** 2 * laurent[0][0] / 16)
+        return None # no known convergence formula here!

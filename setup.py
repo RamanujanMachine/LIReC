@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name="LIReC",
-    version="0.0.2",
+    version="0.0.3",
     # due to Amazon EC2 issues, we probably can't go beyond Python3.9
     # (Python3.10.8 seems to have issues with pip). As such, I don't care if
     # "this is an outdated version of python" until one of 2 things happens:
@@ -17,7 +17,6 @@ setup(
         
         'gmpy2>=2.1.5',
         'mpmath>=1.2.1',
-        'sympy>=1.5.1',
-        'PyLaTeX>=1.4.1',
+        'sympy>=1.5.1'
     ]
 )

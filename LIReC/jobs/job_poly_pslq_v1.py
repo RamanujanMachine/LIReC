@@ -24,8 +24,6 @@ Configured as such:
 '''
 import mpmath as mp
 from itertools import combinations, product
-from logging import getLogger
-from logging.config import fileConfig
 from math import ceil
 from os import getpid
 from sqlalchemy import or_
@@ -35,6 +33,7 @@ from traceback import format_exc
 from LIReC.db import models
 from LIReC.db.access import db
 from LIReC.lib.pslq_utils import *
+from LIReC.lib.logger import *
 from LIReC.jobs.job_poly_pslq_v2 import DualConstant, to_db_format # just gonna borrow this
 
 EXECUTE_NEEDS_ARGS = True
@@ -44,7 +43,6 @@ SEND_INDEX = True
 DEBUG_PRINT_CONSTANTS = False
 
 ALGORITHM_NAME = 'POLYNOMIAL_PSLQ'
-LOGGER_NAME = 'job_logger'
 BULK_SIZE = 500
 BULK_TYPES = {'PcfCanonical'}
 SUPPORTED_TYPES = ['Named', 'PcfCanonical', 'Derived', 'PowerOf']
@@ -57,20 +55,6 @@ FILTERS = [
         models.Constant.precision.isnot(None)
         #or_(models.Cf.scanned_algo == None, ~models.Cf.scanned_algo.has_key(ALGORITHM_NAME)) # TODO USE scan_history TABLE!!!
         ]
-
-def configure_logger(name):
-    import os, sys
-    try:
-        if not os.path.exists('logs'):
-            os.mkdir('logs')
-        for p in sys.path:
-            p2 = os.path.join(p, 'logging.config')
-            if os.path.exists(p2):
-                fileConfig(p2, defaults={'log_filename': name})
-                return
-        raise Exception('logging.config file not found')
-    except:
-        print(f'ERROR WHILE CONFIGURING LOGGER: {format_exc()}')
 
 def get_filters(filters, const_type):
     filter_list = list(FILTERS) # copy!
@@ -116,7 +100,7 @@ def run_query(filters=None, degree=None, order=None, bulk=None):
     if not bulk_types:
         return []
     bulk = bulk if bulk else BULK_SIZE
-    getLogger(LOGGER_NAME).debug(f'Starting to check relations, using bulk size {bulk}')
+    logger.debug(f'Starting to check relations, using bulk size {bulk}')
     results = {const_type:[c.const_id for c in db.session.query(models.Constant)
                                                          .join(get_const_class(const_type))
                                                          .filter(*get_filters(filters, const_type))
@@ -127,7 +111,7 @@ def run_query(filters=None, degree=None, order=None, bulk=None):
     # but on 1000 CFs it only takes 1 second, which imo is worth it since
     # that allows us more variety in testing the CFs...
     # TODO what to do if results is unintentionally empty?
-    getLogger(LOGGER_NAME).info(f'size of batch is {sum(len(results[k]) for k in results)}')
+    logger.info(f'size of batch is {sum(len(results[k]) for k in results)}')
     return results
 
 def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, manual=False):
@@ -137,24 +121,24 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
         global_filters = filters.get('global', {})
         filters.pop('global', 0) # instead of del so we can silently dispose of global even if it doesn't exist
         if not filters:
-            getLogger(LOGGER_NAME).error('No filters found! Aborting...')
+            logger.error('No filters found! Aborting...')
             return 0 # this shouldn't happen unless pool_handler changes, so just in case...
         keys = filters.keys()
         for const_type in keys:
             if const_type not in SUPPORTED_TYPES:
                 msg = f'Unsupported filter type {const_type} will be ignored! Must be one of {SUPPORTED_TYPES}.'
                 print(msg)
-                getLogger(LOGGER_NAME).warn(msg)
+                logger.warn(msg)
                 del filters[const_type]
             elif 'count' not in filters[const_type]:
                 filters[const_type]['count'] = DEFAULT_CONST_COUNT
         total_consts = sum(c['count'] for c in filters.values())
         degree = degree if degree else DEFAULT_DEGREE
         order = order if order else DEFAULT_ORDER
-        getLogger(LOGGER_NAME).info(f'checking against {total_consts} constants at a time, subdivided into {({k : filters[k]["count"] for k in filters})}, using degree-{degree} relations')
+        logger.info(f'checking against {total_consts} constants at a time, subdivided into {({k : filters[k]["count"] for k in filters})}, using degree-{degree} relations')
         if degree > total_consts * order:
             degree = total_consts * order
-            getLogger(LOGGER_NAME).info(f'redundant degree detected! reducing to {degree}')
+            logger.info(f'redundant degree detected! reducing to {degree}')
         
         # need to "internally refresh" the constants so they get committed right
         all_consts = db.session.query(models.Constant).all()
@@ -187,11 +171,11 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
             consts = [c for t in consts for c in t] # need to flatten...
             if relation_is_new(consts, degree, order, old_relations):
                 if DEBUG_PRINT_CONSTANTS:
-                    getLogger(LOGGER_NAME).debug(f'checking consts: {[c.orig.const_id for c in consts]}')
+                    logger.debug(f'checking consts: {[c.orig.const_id for c in consts]}')
                 # some leeway with the extra 10 precision
                 new_relations = [to_db_format(r) for r in check_consts(consts, degree, order, test_prec) if r.precision > PRECISION_RATIO * min(c.precision for c in r.constants) - 10]
                 if new_relations:
-                    getLogger(LOGGER_NAME).info(f'Found relation(s) on constants {[c.orig.const_id for c in consts]}!')
+                    logger.info(f'Found relation(s) on constants {[c.orig.const_id for c in consts]}!')
                     try_count = 1
                     while try_count < 3:
                         try:
@@ -204,23 +188,23 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
                             #db.session.close()
                             #db = access.LIReC_DB()
                             if try_count == 1:
-                                getLogger(LOGGER_NAME).warn('Failed to commit once, trying again.')
+                                logger.warn('Failed to commit once, trying again.')
                             else:
-                                getLogger(LOGGER_NAME).error(f'Could not commit relation(s): {format_exc()}')
+                                logger.error(f'Could not commit relation(s): {format_exc()}')
                         try_count += 1
             #for cf in consts:
             #    if not cf.scanned_algo:
             #        cf.scanned_algo = dict()
             #    cf.scanned_algo[ALGORITHM_NAME] = int(time())
             #db.session.add_all(consts)
-        getLogger(LOGGER_NAME).info(f'finished - found {len(old_relations) - orig_size} results')
+        logger.info(f'finished - found {len(old_relations) - orig_size} results')
         db.session.close()
         
-        getLogger(LOGGER_NAME).info('Commit done')
+        logger.info('Commit done')
         
         return len(old_relations) - orig_size
     except:
-        getLogger(LOGGER_NAME).error(f'Exception in execute job: {format_exc()}')
+        logger.error(f'Exception in execute job: {format_exc()}')
         # TODO "SSL connection has been closed unexpectedly" is a problem...
         # this is just a bandaid fix to make sure the system doesn't shit itself,
         # but we should instead figure out a way to be resistant to this and keep working normally.
@@ -231,5 +215,5 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
 
 def summarize_results(results):
     if any(r for r in results if r==None):
-        getLogger(LOGGER_NAME).info(f'At least one of the workers had an exception! Check logs')
-    getLogger(LOGGER_NAME).info(f'In total found {sum(r for r in results if r)} relations')
+        logger.info(f'At least one of the workers had an exception! Check logs')
+    logger.info(f'In total found {sum(r for r in results if r)} relations')

@@ -12,8 +12,6 @@ all of the configuration as parameters after 'query_data' does the trick.
 from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
-from logging import getLogger
-from logging.config import fileConfig
 from math import inf, ceil
 from multiprocessing import Pool, Manager, Value
 from multiprocessing.managers import ValueProxy
@@ -23,8 +21,8 @@ from time import sleep, time
 from traceback import format_exc
 from typing import Tuple, Dict, Any
 from types import ModuleType
+from LIReC.lib.logger import *
 
-LOGGER_NAME = 'job_logger'
 NO_CRASH = True
 
 @dataclass
@@ -51,7 +49,7 @@ class WorkerPool:
     main_jobs: int
 
     def __init__(self: WorkerPool, pool_size: int = 0) -> None:
-        fileConfig('LIReC/logging.config', defaults={'log_filename': 'pool'})
+        configure_logger('pool')
         self.manager = Manager()
         self.running = self.manager.Value('i', 0)
         self.job_queue = self.manager.Queue()
@@ -86,7 +84,7 @@ class WorkerPool:
 
             if message.is_kill_message:
                 self.main_jobs -= 1
-                getLogger(LOGGER_NAME).info('Killed')
+                logger.info('Killed')
             else:
                 self.pool.apply_async(
                     WorkerPool.run_sub_job,
@@ -124,13 +122,13 @@ class WorkerPool:
             module.summarize_results(results)
             return True
         except:
-            getLogger(LOGGER_NAME).info(f'Error in module {module_path}: {format_exc()}')
+            logger.info(f'Error in module {module_path}: {format_exc()}')
             return False
 
     @staticmethod
     def run_job(running, job_queue, result_queue, module_path, module_config) -> Tuple[str, float]:
         try:
-            fileConfig('LIReC/logging.config', defaults={'log_filename': 'pool_run_job'})
+            configure_logger('pool_run_job')
             module = import_module(module_path)
             args = module_config.get('args', {})
             timings = []
@@ -150,7 +148,7 @@ class WorkerPool:
             job_queue.put(Message.get_kill_message())
             return module_path, timings
         except:
-            getLogger(LOGGER_NAME).info(f'Error in job {module_path}: {format_exc()}')
+            logger.info(f'Error in job {module_path}: {format_exc()}')
             return module_path, []
 
     @staticmethod

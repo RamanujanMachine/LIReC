@@ -1,13 +1,12 @@
 '''
 '''
-from logging import getLogger
-from logging.config import fileConfig
 import signal
 #import numpy as np
 import os
 import sys
 from LIReC.jobs.config import configuration
 from LIReC.lib.pool import WorkerPool
+from LIReC.lib.logger import *
 
 LOGGER_NAME = 'job_logger'
 MOD_PATH = 'LIReC.jobs.job_%s'
@@ -19,19 +18,19 @@ def main() -> None:
     worker_pool = WorkerPool(configuration['pool_size'])
     signal.signal(signal.SIGINT, lambda sig, frame: worker_pool.stop())
     results = worker_pool.start([(MOD_PATH % name, config) for name, config in configuration['jobs_to_run']])
-    fileConfig('LIReC/logging.config', defaults={'log_filename': 'main'})
+    configure_logger('main')
 
     for module_path, timings in results:
-        getLogger(LOGGER_NAME).info('-------------------------------------')
+        logger.info('-------------------------------------')
         if timings:
-            getLogger(LOGGER_NAME).info(f'module {module_path} running times:')
-            getLogger(LOGGER_NAME).info(f'min time: {min(timings)}')
-            getLogger(LOGGER_NAME).info(f'max time: {max(timings)}')
-            #getLogger(LOGGER_NAME).info(f'median time: {np.median(timings)}')
-            #getLogger(LOGGER_NAME).info(f'average time: {np.average(timings)}')
+            logger.info(f'module {module_path} running times:')
+            logger.info(f'min time: {min(timings)}')
+            logger.info(f'max time: {max(timings)}')
+            #logger.info(f'median time: {np.median(timings)}')
+            #logger.info(f'average time: {np.average(timings)}')
         else:
-            getLogger(LOGGER_NAME).info(f"module {module_path} didn't run! check logs")
-        getLogger(LOGGER_NAME).info('-------------------------------------')
+            logger.info(f"module {module_path} didn't run! check logs")
+        logger.info('-------------------------------------')
         
 
 def stop() -> None:

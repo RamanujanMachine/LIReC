@@ -14,4 +14,5 @@ def configure_logger(name):
                 return
         raise Exception('logging.config file not found')
     except:
+        from traceback import format_exc
         print(f'ERROR WHILE CONFIGURING LOGGER: {format_exc()}')

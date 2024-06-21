@@ -67,9 +67,10 @@ class WorkerPool:
 
         for module_path, module_config in modules:
             self.result_queues[module_path] = self.manager.Queue()
+            result_queue = self.result_queues[module_path] # must be initialized first?
             results.append(self.pool.apply_async(
                 WorkerPool.run_job,
-                (self.running, self.job_queue, self.result_queues[module_path], module_path, module_config)
+                (self.running, self.job_queue, result_queue, module_path, module_config)
             ))
         
         self.read_queue()

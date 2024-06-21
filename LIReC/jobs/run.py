@@ -16,7 +16,7 @@ def main() -> None:
     with open('pid.txt', 'w') as pid_file:
         pid_file.writelines([str(os.getpid()), os.linesep])
     worker_pool = WorkerPool(configuration['pool_size'])
-    signal.signal(signal.SIGINT, lambda sig, frame: worker_pool.stop())
+    #signal.signal(signal.SIGINT, lambda sig, frame: worker_pool.stop())
     results = worker_pool.start([(MOD_PATH % name, config) for name, config in configuration['jobs_to_run']])
     configure_logger('main')
 

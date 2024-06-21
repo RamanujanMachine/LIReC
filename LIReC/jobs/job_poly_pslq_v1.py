@@ -58,6 +58,20 @@ FILTERS = [
         #or_(models.Cf.scanned_algo == None, ~models.Cf.scanned_algo.has_key(ALGORITHM_NAME)) # TODO USE scan_history TABLE!!!
         ]
 
+def configure_logger(name):
+    import os, sys
+    try:
+        if not os.path.exists('logs'):
+            os.mkdir('logs')
+        for p in sys.path:
+            p2 = os.path.join(p, 'logging.config')
+            if os.path.exists(p2):
+                fileConfig(p2, defaults={'log_filename': name})
+                return
+        raise Exception('logging.config file not found')
+    except:
+        print(f'ERROR WHILE CONFIGURING LOGGER: {format_exc()}')
+
 def get_filters(filters, const_type):
     filter_list = list(FILTERS) # copy!
     if 'global' in filters:
@@ -95,7 +109,7 @@ def add_addons(consts, const_type, filters, all_addons):
     return consts + [DualConstant.from_db(a.base) for a in all_addons if a.args['name'] in addons]
 
 def run_query(filters=None, degree=None, order=None, bulk=None):
-    fileConfig('LIReC/logging.config', defaults={'log_filename': 'pslq_const_manager'})
+    configure_logger('pslq_const_manager')
     if not filters:
         return []
     bulk_types = set(filters.keys()) & BULK_TYPES
@@ -118,7 +132,7 @@ def run_query(filters=None, degree=None, order=None, bulk=None):
 
 def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, manual=False):
     try: # whole thing must be wrapped so it gets logged
-        fileConfig('LIReC/logging.config', defaults={'log_filename': 'analyze_pcfs' if manual else f'pslq_const_worker_{getpid()}'})
+        configure_logger('analyze_pcfs' if manual else f'pslq_const_worker_{getpid()}')
         i, total_cores, query_data = query_data # SEND_INDEX = True guarantees this
         global_filters = filters.get('global', {})
         filters.pop('global', 0) # instead of del so we can silently dispose of global even if it doesn't exist

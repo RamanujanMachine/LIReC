@@ -9,6 +9,7 @@ def configure_logger(name):
         for p in sys.path:
             p2 = os.path.join(p, 'LIReC/logging.config')
             if os.path.exists(p2):
+                from logging.config
                 logging.config.fileConfig(p2, defaults={'log_filename': name})
                 logger = logging.getLogger('job_logger')
                 return

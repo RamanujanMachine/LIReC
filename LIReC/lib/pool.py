@@ -13,9 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 from math import inf, ceil
-from multiprocessing import Pool, Manager, Value
-from multiprocessing.managers import ValueProxy
-from os import cpu_count
+from multiprocessing import Manager, Value, Process, Pipe
+from os import cpu_count, getpid
 from queue import Queue
 from time import sleep, time
 from traceback import format_exc
@@ -27,77 +26,64 @@ NO_CRASH = True
 
 @dataclass
 class Message:
-    is_kill_message: bool
     module_id: str
     parameters: list
-
+    
     @staticmethod
-    def get_kill_message() -> Message:
-        return Message(True, '', [])
-
+    def get_done_message() -> Message:
+        return Message(None, None)
+    
     @staticmethod
     def get_execution_message(module_id: str, parameters: list) -> Message:
-        return Message(False, module_id, parameters)
-
+        return Message(module_id, parameters)
+    
+    @property
+    def is_done_message(self: Message):
+        return self.module_id is None
 
 def _import(module_id):
     return import_module(module_id[module_id.index('@')+1:])
 
 class WorkerPool:
     manager: Manager
-    running: int
     job_queue: Queue
-    pool: Pool
     result_queues: Dict[str, Queue]
-    main_jobs: int
 
-    def __init__(self: WorkerPool, pool_size: int = 0) -> None:
-        configure_logger('pool')
+    def __init__(self: WorkerPool) -> None:
         self.manager = Manager()
-        self.running = self.manager.Value('i', 0)
         self.job_queue = self.manager.Queue()
-        self.pool = Pool(pool_size) if pool_size else Pool() # default is cpu_count()
+        self.log_queue = self.manager.Queue()
         self.result_queues = {}
-        self.main_jobs = 0
-
-    def stop(self: WorkerPool) -> None:
-        self.running.value = 0
 
     def start(self: WorkerPool, modules: Dict[str, Any]): # -> module_id, timings
-        self.main_jobs = len(modules)
-        self.running.value = 1
-        results = []
-
+        Process(target=print_logger, args=(self.log_queue,)).start()
+        pipes = []
         for i, (module_path, module_config) in enumerate(modules):
             module_id = f'{i}@{module_path}'
             self.result_queues[module_id] = self.manager.Queue()
             result_queue = self.result_queues[module_id] # must be initialized first?
-            results.append(self.pool.apply_async(
-                WorkerPool.run_job,
-                (self.running, self.job_queue, result_queue, module_id, module_config)
-            ))
+            out_pipe, in_pipe = Pipe()
+            Process(
+                target=WorkerPool.run_job,
+                args=(self.job_queue, self.log_queue, result_queue, module_id, module_config, in_pipe)
+            ).start()
+            pipes += [out_pipe]
         
-        self.read_queue()
-
-        return [result.get() for result in results]
-
-    def read_queue(self: WorkerPool) -> None:
-        while self.main_jobs != 0:
+        jobs_left = len(modules)
+        while jobs_left != 0:
             while self.job_queue.empty():
                 sleep(2)
             message = self.job_queue.get()
-
-            if message.is_kill_message:
-                self.main_jobs -= 1
-                logger.info('Killed')
-            else:
-                self.pool.apply_async(
-                    WorkerPool.run_sub_job,
-                    (message.module_id, message.parameters),
-                    callback=lambda result: self.result_queues[message.module_id].put(result)
-                )
-        self.pool.close()
-        self.pool.join()
+            jobs_left -= 1
+            
+            if not message.is_done_message:
+                result_queue = self.result_queues[message.module_id]
+                Process(
+                    target=WorkerPool.run_sub_job,
+                    args=(message.module_id, message.parameters, self.log_queue, result_queue)
+                ).start()
+        
+        return [p.recv() for p in pipes]
 
     @staticmethod
     def run_module(module: ModuleType, module_id: str, job_queue: Queue, result_queue: Queue, run_async: bool, async_cores: int, args: Dict[str, Any]) -> bool:
@@ -127,13 +113,13 @@ class WorkerPool:
             module.summarize_results(results)
             return True
         except:
-            logger.info(f'Error in module {module_id}: {format_exc()}')
+            logging.error(f'Error in module {module_id}: {format_exc()}')
             return False
 
     @staticmethod
-    def run_job(running, job_queue, result_queue, module_id, module_config) -> Tuple[str, float]:
+    def run_job(job_queue, log_queue, result_queue, module_id, module_config, in_pipe) -> Tuple[str, float]:
         try:
-            configure_logger('pool_run_job')
+            configure_logger(f'query_{getpid()}', log_queue)
             module = _import(module_id)
             args = module_config.get('args', {})
             timings = []
@@ -141,7 +127,7 @@ class WorkerPool:
             run_async = module_config.get('run_async', False)
             async_cores = module_config.get('async_cores', 0)
             iteration = 0
-            while running.value and iteration < iterations:
+            while iteration < iterations:
                 start_time = time()
                 worked = WorkerPool.run_module(module, module_id, job_queue, result_queue, run_async, async_cores, args)
                 if not NO_CRASH and not worked:
@@ -150,20 +136,21 @@ class WorkerPool:
                     timings.append(time() - start_time)
                 iteration += 1
             
-            job_queue.put(Message.get_kill_message())
-            return module_id, timings
+            job_queue.put(Message.get_done_message())
+            in_pipe.send((module_id, timings))
         except:
-            logger.info(f'Error in job {module_id}: {format_exc()}')
-            return module_id, []
+            logging.info(f'Error in job {module_id}: {format_exc()}')
+            in_pipe.send((module_id, []))
 
     @staticmethod
-    def run_sub_job(module_id, parameters):
+    def run_sub_job(module_id, parameters, log_queue, result_queue):
+        configure_logger(f'execute_{getpid()}', log_queue)
         module = _import(module_id)
         if parameters:
             result = module.execute_job(parameters[0], **parameters[1]) if getattr(module, 'EXECUTE_NEEDS_ARGS', False) else module.execute_job(parameters)
         else:
             result = module.execute_job()
-        return result
+        result_queue.put(result)
 
     @staticmethod
     def split_parameters(parameters, pool_size, keep_unsplit=False):

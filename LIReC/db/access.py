@@ -229,7 +229,7 @@ class LIReC_DB:
         if [top, bot] in self.canonical_forms():
             return PCF.from_canonical_form((top, bot))
     
-    def relations_native(self, more=False) -> List[PolyPSLQRelation]:
+    def relations_native(self, more=False):
         consts = {c.const_id:DualConstant.from_db(c) for c in self._get_all(models.Constant) if c.value}
         rels = {r.relation_id:r for r in self._get_all(models.Relation) if more or r.relation_type == 'POLYNOMIAL_PSLQ'}
         return [[rels[relation_id], [consts[p[0]] for p in g]] for relation_id, g in groupby(self._get_all(models.constant_in_relation_table), lambda p:p[1]) if relation_id in rels]

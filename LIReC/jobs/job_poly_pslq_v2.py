@@ -78,17 +78,6 @@ def to_db_format(relation: PolyPSLQRelation, consts=None) -> models.Relation:
         res.constants = [c.orig for c in relation.constants] # inner constants need to be DualConstant, else this fails
     return res
 
-def from_db_format(relation: models.Relation, consts: List[DualConstant]) -> PolyPSLQRelation:
-    # the symbols don't matter much, just gonna keep them unique within the relation itself
-    # the orig.const_id will decide anyway
-    return PolyPSLQRelation(consts, relation.details[0], relation.details[1], relation.details[2:])
-
-def all_relations() -> List[PolyPSLQRelation]:
-    # faster to query everything at once!
-    consts = {c.const_id:DualConstant.from_db(c) for c in db.session.query(models.Constant) if c.value}
-    rels = {r.relation_id:r for r in db.session.query(models.Relation).filter(models.Relation.relation_type==ALGORITHM_NAME)}
-    return [from_db_format(rels[relation_id], [consts[p[0]] for p in g]) for relation_id, g in groupby(db.session.query(models.constant_in_relation_table), lambda p:p[1])]
-
 def run_query(degree=2, order=1, min_precision=50, min_roi=2, testing_precision=None, bulk=10, filters=None):
     fileConfig('LIReC/logging.config', defaults={'log_filename': 'poly_pslq_main'})
     testing_precision = testing_precision if testing_precision else min_precision
@@ -110,7 +99,7 @@ def run_query(degree=2, order=1, min_precision=50, min_roi=2, testing_precision=
     priorities = {c[0].const_id : c[1] for c in consts if len(c) > 1}
     consts = [DualConstant.from_db(c[0]) for c in consts if len(c) > 1 and is_workable(c[0].value, testing_precision, min_roi)]
     
-    relations = all_relations()
+    relations = db.relations()
     while True: # remove constants that you know are related
         redundant = combination_is_old(consts, degree, order, relations)
         if redundant:
@@ -157,7 +146,7 @@ def execute_job(query_data, degree=2, order=1, min_precision=50, min_roi=2, test
     try:
         fileConfig('LIReC/logging.config', defaults={'log_filename': 'analyze_pcfs' if manual else f'poly_pslq_subjob_{getpid()}'})
         testing_precision = testing_precision if testing_precision else min_precision
-        relations = all_relations()
+        relations = db.relations()
         new_relations = []
         total = len(query_data)*len(relations)
         getLogger(LOGGER_NAME).info(f'BEGIN - searching {total} pairs of relations for transitive relations:')
@@ -182,7 +171,7 @@ def execute_job(query_data, degree=2, order=1, min_precision=50, min_roi=2, test
 
 def summarize_results(results):
     fileConfig('LIReC/logging.config', defaults={'log_filename': 'poly_pslq_main'})
-    relations = all_relations()
+    relations = db.relations()
     new_relations = []
     for result in results:
         new_relations += [r for r in result if not combination_is_old(r.constants, r.degree, r.order, relations+new_relations)]

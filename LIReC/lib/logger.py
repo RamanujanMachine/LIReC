@@ -1,19 +1,32 @@
-logger = None # do not use before calling configure_logger!
+import logging
+LOG_FORMAT = '%(asctime)s - %(filename)s - %(levelname)s - %(message)s'
 
-def configure_logger(name):
-    global logger
-    import os, sys, logging
-    try:
-        if not os.path.exists('logs'):
-            os.mkdir('logs')
-        for p in sys.path:
-            p2 = os.path.join(p, 'LIReC/logging.config')
-            if os.path.exists(p2):
-                import logging.config
-                logging.config.fileConfig(p2, defaults={'log_filename': name})
-                logger = logging.getLogger('job_logger')
-                return
-        raise Exception('logging.config file not found')
-    except:
-        from traceback import format_exc
-        print(f'ERROR WHILE CONFIGURING LOGGER: {format_exc()}')
+def configure_logger(name, log_queue):
+    import os
+    if not os.path.exists('logs'):
+        os.mkdir('logs')
+    
+    import logging.handlers
+    from multiprocessing import get_logger
+    root = logging.getLogger()
+    
+    fileHandler = logging.handlers.RotatingFileHandler(f'logs/{name}.log', 'a', 1024*1024, 50)
+    fileHandler.setFormatter(logging.Formatter(LOG_FORMAT))
+    root.addHandler(fileHandler)
+    root.addHandler(logging.handlers.QueueHandler(log_queue))
+    root.setLevel(logging.DEBUG)
+
+def print_logger(queue):
+    # https://docs.python.org/3/howto/logging-cookbook.html#logging-to-a-single-file-from-multiple-processes
+    # borrowed from ^^^ and modified to my liking
+    import logging
+    root = logging.getLogger()
+    h = logging.StreamHandler()
+    h.setFormatter(logging.Formatter(LOG_FORMAT))
+    root.addHandler(h)
+    
+    while True:
+        record = queue.get()
+        if record is None:
+            break
+        logging.getLogger(record.name).handle(record)

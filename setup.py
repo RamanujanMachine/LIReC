@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name="LIReC",
-    version="0.0.5",
+    version="0.0.6",
     # due to Amazon EC2 issues, we probably can't go beyond Python3.9
     # (Python3.10.8 seems to have issues with pip). As such, I don't care if
     # "this is an outdated version of python" until one of 2 things happens:

@@ -2,7 +2,6 @@ from decimal import Decimal, getcontext
 from math import prod
 import mpmath as mp
 from mpmath import mpf
-from re import match
 from sympy import Poly, Symbol, compose
 from typing import List
 from urllib.request import urlopen
@@ -278,7 +277,7 @@ class Constants:
         set the precision (in significant digits in base 10). shared with other classes in this file
         '''
         mp.mp.dps = prec
-
+    
     @staticmethod
     def pi() -> mpf:
         '''
@@ -395,7 +394,7 @@ class Constants:
         return mp.ln(2)
     
     @staticmethod
-    def G_025() -> mpf:
+    def Gamma0dot25() -> mpf:
         '''
         gamma(0.25), appears often in other constants.
         OEIS link: https://oeis.org/A068466
@@ -664,7 +663,7 @@ class Constants:
         return p1 + p2
     
     @staticmethod
-    def z_975() -> mpf:
+    def z_dot975() -> mpf:
         '''
         z score for 97.5 percentile point, commonly used alongside normal distributions.
         OEIS link: https://oeis.org/A220510

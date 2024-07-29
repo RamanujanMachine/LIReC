@@ -294,7 +294,7 @@ class LIReC_DB:
                 else:
                     cond_print(verbose, f'Autocalculating {pcfs[i]}...')
                     pcfs[i] = pcfs[i].eval(depth=predict,precision=min_prec)
-                    numbers[i] = PreciseConstant(pcfs[i].value, pcfs[i].precision, f'c{i}')
+            numbers[i] = PreciseConstant(pcfs[i].value, pcfs[i].precision, f'c{i}')
         
         res = None
         if not strict: # STEP 1 - try to PSLQ the numbers alone
@@ -317,7 +317,7 @@ class LIReC_DB:
                     precision = min(found) if named[k].free_symbols else len(str(named[k]).replace('.','').rstrip('0'))
                     mp.mp.dps = max(precision, MIN_PSLQ_DPS)
                     value = named[k].subs({c.name:mp.mpf(str(c.base.value)) for c in names}).evalf(mp.mp.dps) # sympy can ignore unnecessary variables
-                    numbers[k] = PreciseConstant(value, precision, f'({named[k]})')
+                    numbers[k] = PreciseConstant(value, precision, f'{named[k]}')
                 cond_print(verbose, 'Query done. Finding relations...')
             numbers = [numbers[k] for k in sorted(numbers)] # can flatten now, and everything will be in the original order still
             res = check_consts(numbers, degree, order, min_prec, min_roi, strict, verbose)

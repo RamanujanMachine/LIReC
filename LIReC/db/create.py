@@ -26,7 +26,7 @@ if __name__ == '__main__':
         named_const.base = Constant()
         named_const.base.precision = precision
         named_const.base.value = Decimal(str(zeta(x)))
-        named_const.name = f'Zeta{x}'
+        named_const.name = f'zeta{x}'
         named_const.description = f'zeta({x})'
         db.session.add(named_const)
     

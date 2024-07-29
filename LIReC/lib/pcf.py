@@ -91,9 +91,7 @@ class GCF:
     def __init__(self: GCF, a: Callable[[int], Any], b: Callable[[int], Any], mat: List[int] or None = None, init_depth: int = 0, **kwargs):
         self.a_func = a
         self.b_func = b
-        # this choice of initial matrix will compute the value of the semi-canonical form instead! intentional!
-        a0 = self.a_func(0)
-        self.mat = [mat[0:2], mat[2:4]] if mat else [[1, a0], [0, a0]]
+        self.mat = [mat[0:2], mat[2:4]] if mat else [[1, self.a_func(0)], [0, 1]]
         self.depth = init_depth
         self.true_value = None
         self.eval_defaults = {
@@ -274,8 +272,6 @@ class PCF(GCF):
             raise Exception('neither polynomial can be 0')
         if auto_deflate:
             self.deflate()
-        # canonize!
-        self.a, self.b = PCF.canonical_form_to_a_b(self.canonical_form())
         self._pre_eval()
         super().__init__(lambda n: _poly_eval(self.a_coeffs, n), lambda n: _poly_eval(self.b_coeffs, n), mat, init_depth, **kwargs)
         self.eval_defaults['force_fr'] = kwargs.get('force_fr', False)

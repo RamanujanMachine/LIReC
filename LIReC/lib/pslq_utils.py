@@ -3,9 +3,11 @@ from enum import Enum
 from functools import reduce
 from itertools import chain, combinations, combinations_with_replacement, count, takewhile
 from operator import mul, add, and_
+from re import match, subn
+from sympy import sympify, Symbol
+from traceback import format_exc
 from typing import List
 import mpmath as mp
-from sympy import sympify, Symbol
 
 MIN_PSLQ_DPS = 15
 PRECISION_RATIO = 0.75
@@ -37,6 +39,51 @@ class PreciseConstant:
             self.value = mp.mpf(str(value))
         self.symbol = symbol
 
+def _latexify(name: str) -> str:
+    '''
+    formats the given constant's name in LaTeX format.
+    
+    (this would be in calculator.Constants, but that would cause a circular dependency...
+     TODO put calculator.Constants to its own file)
+    '''
+    if name == 'e':
+        return name
+    
+    if name[0] == 'e':
+        exp = Constants.latexify(name[1:])
+        if len(exp) > 1:
+            exp = f'{{{exp}}}'
+        return f'e^{exp}'
+    
+    if 'cbrt' in name:
+        name = f'root3of{name.replace("cbrt","")}'
+    
+    root = match(r'root(\d+)of(\w+)', name)
+    if root and root[0] == name:
+        return fr'\sqrt[{root[1]}]{{{Constants.latexify(root[2])}}}'
+    
+    groups = match(r'([A-Za-z]*)(_?)([A-Za-z]*)(\w*)', name)
+    if groups[0] != name:
+        raise ValueError(f'cannot latexify {name}')
+    
+    greek_letters = ['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta', 'eta ', 'theta', 'iota', 'kappa', 'lambda', 'mu  ', 'nu', 'xi', 'omicron', 'pi', 'rho', 'sigma', 'tau', 'upsilon', 'phi', 'chi', 'psi', 'omega']
+    special_funcs = ['log', 'ln', 'sqrt', 'zeta', 'Gamma']
+    special_funcs_parentheses = ['zeta', 'Gamma']
+    
+    first = groups[1].replace('prime', "'").replace('dot','.')
+    second = groups[3]
+    if second.lower() in greek_letters:
+        second = f'\\{second}'
+    second += groups[4]
+    second = second.replace('dot','.')
+    
+    if (groups[2] and len(second) > 1) or first in special_funcs:
+        second = f'({second})' if first in special_funcs_parentheses else f'{{{second}}}'
+    if first.lower() in greek_letters or first in special_funcs:
+        first = f'\\{first}'
+    
+    return f'{first}{groups[2]}{second}'
+
 class PolyPSLQRelation:
     constants: List[PreciseConstant]
     degree: int
@@ -44,11 +91,14 @@ class PolyPSLQRelation:
     coeffs: List[int]
     isolate: int or str or None # or Symbol
     include_isolated: bool
+    latex_mode: bool
     _confidence: Confidence or None
     ranges: List[mp.mpf]
     
     def __fix_isolate(self):
         # need isolate as a str eventually
+        if isinstance(self.isolate, bool):
+            return # do nothing! keep it as is!
         if isinstance(self.isolate, int):
             self.isolate = (self.constants[self.isolate].symbol or f'c{self.isolate}') if self.isolate < len(self.constants) else None
         try: # will become a Symbol (or stay None if is None)
@@ -59,13 +109,24 @@ class PolyPSLQRelation:
             except:
                 pass
     
-    def __init__(self, consts, degree, order, coeffs, isolate=None, include_isolated=True, confidence=None, ranges=None):
+    def __fix_symbols(self):
+        if self.latex_mode:
+            for c in self.constants:
+                try:
+                    c.symbol = Symbol(_latexify(str(c.symbol)))
+                except:
+                    # either it's not in the named constant format, or it's
+                    # already latexified. either way, nothing to do
+                    pass
+    
+    def __init__(self, consts, degree, order, coeffs, isolate=None, include_isolated=True, latex_mode=False, confidence=None, ranges=None):
         self.constants = consts
         self.degree = degree
         self.order = order
         self.coeffs = coeffs
         self.isolate = isolate
         self.include_isolated = include_isolated
+        self.latex_mode = latex_mode
         self._confidence = confidence
         self.ranges = ranges or [mp.mpf('1.25'), mp.mpf('1.5'), mp.mpf(2), mp.mpf(3)]
     
@@ -76,19 +137,24 @@ class PolyPSLQRelation:
                 c.symbol = f'c{i}'
             if not isinstance(c.symbol, Symbol):
                 c.symbol = Symbol(c.symbol)
-            
-        monoms = [reduce(mul, (c.symbol**exp[i] for i,c in enumerate(self.constants)), self.coeffs[j]) for j, exp in enumerate(exponents)]
-        expr = sympify(reduce(add, monoms, 0))
         
         self.__fix_isolate()
+        self.__fix_symbols()
+        monoms = [reduce(mul, (c.symbol**exp[i] for i,c in enumerate(self.constants)), self.coeffs[j]) for j, exp in enumerate(exponents)]
+        expr = sympify(reduce(add, monoms, 0))
+        res = None
         if self.isolate not in expr.free_symbols or not expr.is_Add: # checking is_Add just in case...
-            return f'{expr} = 0 ({self.precision})'
-        # expect expr to be Add of Muls or Pows, so args will give the terms
-        # so now the relation is (-num) + (denom) * isolate = 0, or isolate = num/denom!
-        num = reduce(add, [-t for t in expr.args if self.isolate not in t.free_symbols], 0)
-        denom = reduce(add, [t/self.isolate for t in expr.args if self.isolate in t.free_symbols], 0)
-        res = f'{num/denom} ({self.precision})' # this will not be perfect if isolate appears with an exponent! will also be weird if either num or denom is 0
-        return (f'{self.isolate} = ' + res) if self.include_isolated else res
+            res = f'{expr} = 0 ({self.precision})'
+        else:
+            # expect expr to be Add of Muls or Pows, so args will give the terms
+            # so now the relation is (-num) + (denom) * isolate = 0, or isolate = num/denom!
+            num = reduce(add, [-t for t in expr.args if self.isolate not in t.free_symbols], 0)
+            denom = reduce(add, [t/self.isolate for t in expr.args if self.isolate in t.free_symbols], 0)
+            # this will not be perfect if isolate appears with an exponent! will also be weird if either num or denom is 0
+            res = (fr'\frac{{{num}}}{{{denom}}}' if self.latex_mode else f'{num/denom}') + f' ({self.precision})' 
+            res = (f'{self.isolate} = ' if self.include_isolated else '') + res
+        # finally perform latex_mode substitution for exponents if necessary
+        return subn('\*\*(\w+)', '**{\\1}', res)[0] if self.latex_mode else res
 
     @property
     def precision(self):
@@ -137,7 +203,7 @@ def poly_get(consts, exponents):
 
 def poly_eval(poly, coeffs, precisions, base=10):
     with mp.workdps(max(precisions) + 10):
-        min_prec = max(min(precisions), MIN_PSLQ_DPS) if base==10 else mp.inf
+        min_prec = mp.floor(max(min(precisions), MIN_PSLQ_DPS) * mp.log(10, base))
         return int(min(mp.floor(-mp.log(abs(mp.fdot(poly, coeffs)), base)), min_prec))
 
 def poly_verify(consts, degree = None, order = None, relation = None, full_relation = None, exponents = None):
@@ -179,7 +245,7 @@ def poly_check(consts, degree = None, order = None, exponents = None, test_prec 
         # eitherway there's no relation to be found here!
         # TODO for now assuming that the latter case (one constant is smaller than another constant's precision) doesn't happen,
         # solve this later by normalizing everything or something
-        pass
+        cond_print(verbose, f'poly_check failed, no relation will be returned. {format_exc()}')
     return None
 
 def compress_relation(result, consts, exponents, degree, order, verbose=False):

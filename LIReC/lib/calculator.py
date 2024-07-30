@@ -457,7 +457,7 @@ class Constants:
         return mp.findroot(mp.li, 1.5)
     
     @staticmethod
-    def G() -> mpf:
+    def G_B() -> mpf:
         '''
         gauss constant, related to bernoulli's lemniscate.
         OEIS link: https://oeis.org/A014549
@@ -514,7 +514,7 @@ class Constants:
         return mp.glaisher()
     
     @staticmethod
-    def C() -> mpf:
+    def G() -> mpf:
         '''
         catalan constant, important to combinatorics, topology, and more.
         OEIS link: https://oeis.org/A006752

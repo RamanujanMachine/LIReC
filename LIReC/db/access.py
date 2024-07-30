@@ -126,7 +126,13 @@ class LIReC_DB:
         return self._get_all(models.PcfCanonicalConstant)
 
     def describe(self, name):
-        return next((d for c, d in self.names_with_descriptions if c == name), None)
+        return next((d for c,d in self.names_with_descriptions if c == name), None)
+    
+    def search(self, query):
+        matches = [c for c,d in self.names_with_descriptions if query in d]
+        if not matches:
+            return None
+        return matches if len(matches) > 1 else matches[0]
     
     def relations_with(self, name, max_degree=2, max_order=1):
         const = next((c for c in self.constants if c.name == name), None)

@@ -7,7 +7,7 @@ configuration = {
                 'Named': { 'count': 1, 'addons': ['pi*e'] }
                 }
             },
-            'run_async': True,
+            'run_async': False,
             'async_cores': 2
         }),#,
         #'poly_pslq_v2', {

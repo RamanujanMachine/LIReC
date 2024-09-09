@@ -50,11 +50,11 @@ class DBConnection:
     db_name: str
     
     def __init__(self):
-        self.host = 'database-1.c1keieal025m.us-east-2.rds.amazonaws.com'
+        self.host = 'rmdb.cluster-czg4ecmu66lx.us-east-2.rds.amazonaws.com'
         self.port = 5432
         self.user = 'spectator_public'
         self.passwd = 'helloworld123'
-        self.db_name = 'lirec-main'
+        self.db_name = 'lirec'
     
     def __str__(self):
         return f'postgresql://{self.user}:{self.passwd}@{self.host}:{self.port}/{self.db_name}'

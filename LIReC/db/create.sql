@@ -102,6 +102,7 @@ CREATE ROLE spectator WITH
 	NOCREATEROLE
 	NOREPLICATION;
 
+GRANT ALL ON SCHEMA public TO spectator;
 GRANT SELECT ON constant TO spectator;
 GRANT SELECT ON constant_in_relation TO spectator;
 GRANT SELECT, REFERENCES ON named_constant TO spectator;

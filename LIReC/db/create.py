@@ -2,7 +2,7 @@ from decimal import Decimal
 from os import system
 from LIReC.db.access import connection, db
 from LIReC.db.models import NamedConstant, Constant
-from LIReC.lib.calculator import Constants
+from LIReC.lib.calculator import Constants, Universal
 
 if __name__ == '__main__':
     oldname = connection.db_name
@@ -10,14 +10,16 @@ if __name__ == '__main__':
     system(f'psql {connection} < LIReC/db/create.sql')
     connection.db_name = oldname
     
-    precision = 4000
+    precision = 16000
     print(f'Using {precision} digits of precision')
     Constants.set_precision(precision)
     for const in Constants.__dict__.keys():
         if const[0] == '_' or const == 'set_precision':
             continue
         print(f'Adding named constant {const}')
-        db.session.add(Universal.calc_named(const, True, True))
+        if 'CAUTION' in Constants.__dict__[const].__get__(0).__doc__: Constants.set_precision(precision // 4)
+        else: Constants.set_precision(precision)
+        db.session.add(Universal.calc_named(const, None, True, True))
     
     from mpmath import zeta
     

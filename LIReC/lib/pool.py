@@ -49,13 +49,17 @@ class WorkerPool:
     job_queue: Queue
     result_queues: Dict[str, Queue]
 
-    def __init__(self: WorkerPool) -> None:
+    def start(self: WorkerPool, modules: Dict[str, Any]): # -> module_id, timings
+        if len(modules) == 1 and not modules[0][1].get('run_async', False):
+            module_path, module_config = modules[0]
+            i = 0
+            module_id = f'{i}@{module_path}'
+            return WorkerPool.run_job(None, None, None, module_id, module_config, None)
+        
         self.manager = Manager()
         self.job_queue = self.manager.Queue()
         self.log_queue = self.manager.Queue()
         self.result_queues = {}
-
-    def start(self: WorkerPool, modules: Dict[str, Any]): # -> module_id, timings
         Process(target=print_logger, args=(self.log_queue,)).start()
         pipes = []
         for i, (module_path, module_config) in enumerate(modules):
@@ -136,11 +140,17 @@ class WorkerPool:
                     timings.append(time() - start_time)
                 iteration += 1
             
-            job_queue.put(Message.get_done_message())
-            in_pipe.send((module_id, timings))
+            if in_pipe:
+                job_queue.put(Message.get_done_message())
+                in_pipe.send((module_id, timings))
+            else:
+                return (module_id, timings)
         except:
             logging.info(f'Error in job {module_id}: {format_exc()}')
-            in_pipe.send((module_id, []))
+            if in_pipe:
+                in_pipe.send((module_id, []))
+            else:
+                return (module_id, [])
 
     @staticmethod
     def run_sub_job(module_id, parameters, log_queue, result_queue):

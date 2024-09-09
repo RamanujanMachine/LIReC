@@ -2,7 +2,9 @@ from decimal import Decimal, getcontext
 from math import prod
 import mpmath as mp
 from mpmath import mpf
+from re import match
 from sympy import Poly, Symbol, compose
+from traceback import format_exc
 from typing import List
 from urllib.request import urlopen
 from LIReC.db.models import *
@@ -430,7 +432,7 @@ class Constants:
         return mp.lambertw(1)
     
     @staticmethod
-    def Zeta3() -> mpf:
+    def zeta3() -> mpf:
         '''
         apery constant, appears often in physics.
         OEIS link: https://oeis.org/A002117

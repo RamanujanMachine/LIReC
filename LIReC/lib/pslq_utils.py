@@ -50,7 +50,7 @@ def _latexify(name: str) -> str:
         return name
     
     if name[0] == 'e':
-        exp = Constants.latexify(name[1:])
+        exp = _latexify(name[1:])
         if len(exp) > 1:
             exp = f'{{{exp}}}'
         return f'e^{exp}'
@@ -60,7 +60,7 @@ def _latexify(name: str) -> str:
     
     root = match(r'root(\d+)of(\w+)', name)
     if root and root[0] == name:
-        return fr'\sqrt[{root[1]}]{{{Constants.latexify(root[2])}}}'
+        return fr'\sqrt[{root[1]}]{{{_latexify(root[2])}}}'
     
     groups = match(r'([A-Za-z]*)(_?)([A-Za-z]*)(\w*)', name)
     if groups[0] != name:

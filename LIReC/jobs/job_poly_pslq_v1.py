@@ -186,6 +186,7 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
                 new_relations = [r for r in check_consts(consts, degree, order, test_prec) if r.precision > PRECISION_RATIO * min(c.precision for c in r.constants) - 10]
                 if new_relations:
                     logging.info(f'Found relation(s) on constants {[c.orig.const_id for c in consts]}!')
+                    break
                     try_count = 1
                     while try_count < 3:
                         try:
@@ -213,7 +214,7 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
         logging.info('Commit done')
         
         return len(old_relations) - orig_size
-    except:
+    except Exception as e:
         logging.error(f'Exception in execute job: {format_exc()}')
         # TODO "SSL connection has been closed unexpectedly" is a problem...
         # this is just a bandaid fix to make sure the system doesn't shit itself,
@@ -221,6 +222,7 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
         # right now this will just cause the search job to restart itself without
         # knowing where to return to. not great
         db.session.rollback()
+        raise e
         # not returning anything so summarize_results can see the error
 
 def summarize_results(results):

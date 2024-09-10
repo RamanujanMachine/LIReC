@@ -91,34 +91,28 @@ class WorkerPool:
 
     @staticmethod
     def run_module(module: ModuleType, module_id: str, job_queue: Queue, result_queue: Queue, run_async: bool, async_cores: int, args: Dict[str, Any]) -> bool:
-        try:
-            if not hasattr(module, 'run_query'):
-                module.execute_job(**args)
-                return True
-            queried_data = module.run_query(**args)
-            if queried_data == -1:
-                raise Exception('internal error')
-            extra_args = getattr(module, 'EXECUTE_NEEDS_ARGS', False)
-            keep_unsplit = getattr(module, 'KEEP_UNSPLIT', False)
-            send_index = getattr(module, 'SEND_INDEX', False)
-            if not run_async:
+        if not hasattr(module, 'run_query'):
+            module.execute_job(**args)
+        queried_data = module.run_query(**args)
+        if queried_data == -1:
+            raise Exception('internal error')
+        extra_args = getattr(module, 'EXECUTE_NEEDS_ARGS', False)
+        keep_unsplit = getattr(module, 'KEEP_UNSPLIT', False)
+        send_index = getattr(module, 'SEND_INDEX', False)
+        if not run_async:
+            if send_index:
+                queried_data = (-1, 1, queried_data)
+            results = [module.execute_job(queried_data, **args) if extra_args else module.execute_job(queried_data)]
+        else:
+            async_cores = async_cores if async_cores != 0 else cpu_count()
+            for i, queried_chunk in enumerate(WorkerPool.split_parameters(queried_data, async_cores, keep_unsplit)):
                 if send_index:
-                    queried_data = (-1, 1, queried_data)
-                results = [module.execute_job(queried_data, **args) if extra_args else module.execute_job(queried_data)]
-            else:
-                async_cores = async_cores if async_cores != 0 else cpu_count()
-                for i, queried_chunk in enumerate(WorkerPool.split_parameters(queried_data, async_cores, keep_unsplit)):
-                    if send_index:
-                        queried_chunk = (i, async_cores, queried_chunk)
-                    job_queue.put(Message.get_execution_message(module_id, (queried_chunk, args) if extra_args else queried_chunk))
-                results = []
-                while len(results) < async_cores:
-                    results.append(result_queue.get())
-            module.summarize_results(results)
-            return True
-        except:
-            logging.error(f'Error in module {module_id}: {format_exc()}')
-            return False
+                    queried_chunk = (i, async_cores, queried_chunk)
+                job_queue.put(Message.get_execution_message(module_id, (queried_chunk, args) if extra_args else queried_chunk))
+            results = []
+            while len(results) < async_cores:
+                results.append(result_queue.get())
+        module.summarize_results(results)
 
     @staticmethod
     def run_job(job_queue, log_queue, result_queue, module_id, module_config, in_pipe) -> Tuple[str, float]:
@@ -133,9 +127,7 @@ class WorkerPool:
             iteration = 0
             while iteration < iterations:
                 start_time = time()
-                worked = WorkerPool.run_module(module, module_id, job_queue, result_queue, run_async, async_cores, args)
-                if not NO_CRASH and not worked:
-                    break
+                WorkerPool.run_module(module, module_id, job_queue, result_queue, run_async, async_cores, args)
                 if len(timings) < 30:
                     timings.append(time() - start_time)
                 iteration += 1
@@ -145,7 +137,9 @@ class WorkerPool:
                 in_pipe.send((module_id, timings))
             else:
                 return (module_id, timings)
-        except:
+        except Exception as e:
+            if isinstance(e, KeyboardInterrupt):
+                raise e # let it go through and stop everything
             logging.info(f'Error in job {module_id}: {format_exc()}')
             if in_pipe:
                 in_pipe.send((module_id, []))

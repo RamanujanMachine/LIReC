@@ -54,7 +54,7 @@ class WorkerPool:
             module_path, module_config = modules[0]
             i = 0
             module_id = f'{i}@{module_path}'
-            return WorkerPool.run_job(None, None, None, module_id, module_config, None)
+            return [WorkerPool.run_job(None, None, None, module_id, module_config, None)]
         
         self.manager = Manager()
         self.job_queue = self.manager.Queue()

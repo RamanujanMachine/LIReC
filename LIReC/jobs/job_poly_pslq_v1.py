@@ -186,7 +186,7 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
                 new_relations = [r for r in check_consts(consts, degree, order, test_prec) if r.precision > PRECISION_RATIO * min(c.precision for c in r.constants) - 10]
                 if new_relations:
                     logging.info(f'Found relation(s) on constants {[c.orig.const_id for c in consts]}!')
-                    break
+                    
                     try_count = 1
                     while try_count < 3:
                         try:

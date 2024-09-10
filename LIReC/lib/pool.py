@@ -121,7 +121,7 @@ class WorkerPool:
             module = _import(module_id)
             args = module_config.get('args', {})
             timings = []
-            iterations = module_config.get('iterations', inf)
+            iterations = module_config.get('iterations', 1)
             run_async = module_config.get('run_async', False)
             async_cores = module_config.get('async_cores', 0)
             iteration = 0

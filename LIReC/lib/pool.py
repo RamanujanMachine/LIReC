@@ -20,7 +20,7 @@ from traceback import format_exc
 from typing import Tuple, Dict, Any
 from types import ModuleType
 from LIReC.lib.logger import *
-import LIReC.jobs
+import LIReC.jobs.job_poly_pslq_v1
 
 NO_CRASH = True
 

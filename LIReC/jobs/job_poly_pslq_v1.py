@@ -78,7 +78,7 @@ def get_const_class(const_type):
 def get_consts(const_type, filters):
     if const_type == 'Named': # Constant first intentionally! don't need extra details, but want to filter still
         precision = filters.get('global', {}).get('min_precision', None)
-        named = db.constants
+        named = [c.const_id for c in db.constants]
         return [DualConstant.from_db(c) for c in db._get_all(models.Constant) if c.const_id in named and c.precision is not None and (precision is None or c.precision >= precision)]
 
 def relation_is_new(consts, degree, order, other_relations):
@@ -104,7 +104,7 @@ def run_query(filters=None, degree=None, order=None, bulk=None):
     if 'PcfCanonical' in bulk_types:
         precision = filters.get('global', {}).get('min_precision', None)
         pcfs = [p.const_id for p in db.cfs]
-        consts = [c for c in db._get_all(models.Constant) if c.const_id in pcfs and c.precision is not None and (precision is None or c.precision >= precision)]
+        consts = [c.const_id for c in db._get_all(models.Constant) if c.const_id in pcfs and c.precision is not None and (precision is None or c.precision >= precision)]
         from random import shuffle
         shuffle(consts)
         results['PcfCanonical'] = consts[:bulk]

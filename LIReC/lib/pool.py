@@ -11,7 +11,6 @@ all of the configuration as parameters after 'query_data' does the trick.
 '''
 from __future__ import annotations
 from dataclasses import dataclass
-from importlib import import_module
 from math import inf, ceil
 from multiprocessing import Manager, Value, Process, Pipe
 from os import cpu_count, getpid
@@ -21,6 +20,7 @@ from traceback import format_exc
 from typing import Tuple, Dict, Any
 from types import ModuleType
 from LIReC.lib.logger import *
+import LIReC.jobs
 
 NO_CRASH = True
 
@@ -42,7 +42,11 @@ class Message:
         return self.module_id is None
 
 def _import(module_id):
-    return import_module(module_id[module_id.index('@')+1:])
+    # TODO add here any new jobs we are interested in working with
+    name = module_id[module_id.index('@')+1:]
+    if 'poly_pslq_v1' in name:
+        return LIReC.jobs.job_poly_pslq_v1
+    raise Exception(f'unknown job "{name}"')
 
 class WorkerPool:
     manager: Manager

@@ -120,6 +120,8 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
     try: # whole thing must be wrapped so it gets logged
         #configure_logger('analyze_pcfs' if manual else f'pslq_const_worker_{getpid()}')
         i, total_cores, query_data = query_data # SEND_INDEX = True guarantees this
+        if i == -1: # tells us that we're running sync, but just set i = 0 and continue as normal
+            i = 0
         global_filters = filters.get('global', {})
         filters.pop('global', 0) # instead of del so we can silently dispose of global even if it doesn't exist
         if not filters:
@@ -157,6 +159,7 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
         subsets = [list(combinations(add_addons(x, const_type, filters, addons), filters[const_type]['count'])) for const_type, x in subsets]
         total_options = reduce(mul, [len(x) for x in subsets])
         first, last = ceil((total_options * i) / total_cores), ceil((total_options * (i + 1)) / total_cores)
+        logging.info(f'search space slice is between {first} and {last}')
         i = 0
         
         # TODO mass query the many-to-many table! the first call to relation_is_new takes too long!
@@ -169,9 +172,11 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
         print_index, PRINT_DELAY = 0, 10
         for consts in product(*subsets):
             if i >= last:
+                logging.info(f'surpassed end of search space slice, terminating')
                 break
             i += 1
             if i < first:
+                logging.info(f'found start of search space slice, beginning search')
                 continue
             consts = [c for t in consts for c in t] # need to flatten...
             print_msg = f'checking consts: {[c.orig.const_id for c in consts]}'

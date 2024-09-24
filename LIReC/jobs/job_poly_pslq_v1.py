@@ -169,7 +169,7 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
         # even if the commented code were to be uncommented and implemented for
         # the scan_history table, this loop still can't be turned into list comprehension
         # because finding new relations depends on the new relations we found so far!
-        print_index, PRINT_DELAY = 0, 10
+        print_index, PRINT_DELAY = 0, 100
         for consts in product(*subsets):
             if i >= last:
                 logging.info(f'surpassed end of search space slice, terminating')
@@ -186,7 +186,7 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
                 logging.info(print_msg)
             else:
                 print_index += 1
-                logging.debug(print_msg)
+                #logging.debug(print_msg)
             if True: # not combination_is_old(consts, degree, order, old_relations):
                 # some leeway with the extra 10 precision
                 new_relations = [r for r in check_consts(consts, degree, order, test_prec) if r.precision > PRECISION_RATIO * min(c.precision for c in r.constants) - 10]

@@ -176,8 +176,9 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
                 break
             i += 1
             if i < first:
-                logging.info(f'found start of search space slice, beginning search')
                 continue
+            if i == first:
+                logging.info(f'found start of search space slice, beginning search')
             consts = [c for t in consts for c in t] # need to flatten...
             print_msg = f'checking consts: {[c.orig.const_id for c in consts]}'
             if print_index >= PRINT_DELAY:

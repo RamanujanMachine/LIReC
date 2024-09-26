@@ -41,7 +41,10 @@ class PreciseConstant:
     
     def to_json(self) -> dict:
         with mp.workdps(self.precision):
-            return {'value': str(self.value), 'precision': self.precision, 'symbol': str(self.symbol)}
+            d = {'value': str(self.value), 'precision': self.precision}
+            if self.symbol:
+                d['symbol'] = str(self.symbol)
+            return d
 
 def _latexify(name: str) -> str:
     '''

@@ -3,7 +3,7 @@ import logging
 from collections import namedtuple
 from decimal import Decimal, getcontext
 from functools import reduce
-from itertools import combinations
+from itertools import combinations, product
 from sympy import Symbol, parse_expr
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
@@ -249,7 +249,7 @@ class LIReC_DB:
         """
         return [PCF.from_canonical_form(c) for c in self.canonical_forms()]
 
-    def identify(self, values, degree=2, order=1, min_prec=None, min_roi=2, isolate=0, strict=False, wide_search=False, see_also=False, verbose=False):
+    def identify(self, values, degree=2, order=1, min_prec=None, min_roi=2, isolate=0, strict=False, wide_search=False, pcf_search=False, see_also=False, verbose=False):
         if not values: # SETUP - organize values
             return []
         numbers, named, pcfs = {}, {}, {}
@@ -307,7 +307,7 @@ class LIReC_DB:
             res = check_consts(list(numbers.values()), degree, order, min_prec, min_roi, False, verbose)
             if res:
                 cond_print(verbose, 'Found relation(s) between the given numbers without using the named constants!')
-            elif not named and not wide_search:
+            elif not (named or wide_search or pcf_search):
                 cond_print(verbose, 'No named constants were given, and the given numbers have no relation. Consider running with wide_search=True to search with all named constants.')
                 return []
         
@@ -329,30 +329,60 @@ class LIReC_DB:
             res = check_consts(numbers, degree, order, min_prec, min_roi, strict, verbose)
         
         extra = None
-        if not res and wide_search: # STEP 3 - wide search
+        if not res and (wide_search or pcf_search): # STEP 3 - wide search
             try: # if it's a generator, convert it first
                 wide_search = set(wide_search)
             except:
                 pass
-            consts = [PreciseConstant(c.base.value, c.base.precision, c.name) for c in names]
-            sizes = sorted(wide_search) if isinstance(wide_search, set) else [1] # no more unbounded searches!
+            cond_print(verbose, 'Preparing for wide search...')
+            consts = [numbers]
+            if pcf_search:
+                if pcf_search == True:
+                    pcf_search = [-1, -1, -1]
+                pcf_search = pcf_search[:3]
+                pcf_search += [-1] * (3 - len(pcf_search))
+                cond_print(verbose, 'Filtering continued fractions... this may take a few seconds')
+                res = []
+                maxcoeff, maxdega, maxdegb = pcf_search
+                for canonical in db.cfs:
+                    pcf = PCF.from_canonical_form((canonical.P, canonical.Q))
+                    if canonical.convergence != models.PcfConvergence.RATIONAL.value \
+                       and canonical.base.precision >= min_prec \
+                       and (maxcoeff < 0 or all(abs(c) <= maxcoeff for c in pcf.a.coeffs() + pcf.b.coeffs())) \
+                       and (maxdega < 0 or pcf.a.degree() <= maxdega) \
+                       and (maxdegb < 0 or pcf.b.degree() <= maxdegb):
+                        res += [PreciseConstant(canonical.base.value, canonical.base.precision, str(pcf))]
+                consts += [res]
+            sizes = [0]
+            nameds = []
+            if wide_search:
+                sizes = sorted(wide_search) if isinstance(wide_search, set) else [1] # no more unbounded searches!
+                nameds = [PreciseConstant(c.base.value, c.base.precision, c.name) for c in names]
             original_symbols = {n.symbol for n in numbers}
-            cond_print(verbose, 'Wide search beginning (PSLQ verbose prints are suppressed during the wide search!)')
-            for i in sizes:
-                cond_print(verbose, f'Searching subsets of size {i}')
-                for subset in combinations(consts, i):
-                    if any(c for c in subset if c.symbol=='C_10'): # TODO temporarily ignore champernowne, it's causing too many false positives
-                        continue
-                    to_test = numbers + list(subset)
-                    min_prec = min(v.precision for v in to_test)
-                    res = check_consts(to_test, degree, order, min_prec, min_roi, False, False) # too much printing!
-                    res = [r for r in res if {c.symbol for c in r.constants} & original_symbols]
+            go = True
+            if wide_search and pcf_search:
+                print('WARNING: You are about to start a huge search, involving both fundamental constants and continued fractions.')
+                print('This search can take a very long time! If you know what you\'re doing, input Y to continue.')
+                if input() != "Y":
+                    go = False
+            if go:
+                cond_print(verbose, 'Wide search beginning (PSLQ verbose prints are suppressed during the wide search!)')
+                for i in sizes:
+                    cond_print(i > 0 and verbose, f'Searching subsets of size {i}')
+                    for subset in product(combinations(nameds, i), *consts):
+                        subset_nameds, *subset_rest = subset
+                        to_test = list(subset_nameds) + subset_rest
+                        if any(c for c in to_test if c.symbol=='C_10'): # TODO temporarily ignore champernowne, it's causing too many false positives
+                            continue
+                        min_prec = min(v.precision for v in to_test)
+                        res = check_consts(to_test, degree, order, min_prec, min_roi, False, False) # too much printing!
+                        res = [r for r in res if {c.symbol for c in r.constants} & original_symbols]
+                        if res:
+                            if wide_search and see_also:
+                                extra = self.relations_with(to_test[0].symbol, degree, order)
+                            break
                     if res:
-                        if see_also:
-                            extra = self.relations_with(subset[0].symbol, degree, order)
                         break
-                if res:
-                    break
         
         if isolate != None and not (isolate is False): # need to differentiate between 0 and False
             isolate = named[0].symbol if (isolate is True) and named else isolate

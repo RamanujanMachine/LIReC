@@ -187,12 +187,11 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
             else:
                 print_index += 1
                 #logging.debug(print_msg)
-            if True: # not combination_is_old(consts, degree, order, old_relations):
+            if not combination_is_old(consts, degree, order, old_relations):
                 # some leeway with the extra 10 precision
                 new_relations = [r for r in check_consts(consts, degree, order, test_prec) if r.precision > PRECISION_RATIO * min(c.precision for c in r.constants) - 10]
                 if new_relations:
                     logging.info(f'Found relation(s) on constants {[c.orig.const_id for c in consts]}!')
-                    continue
                     try_count = 1
                     while try_count < 3:
                         try:

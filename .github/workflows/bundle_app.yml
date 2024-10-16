@@ -1,0 +1,157 @@
+name: 'Prepare Deployment Bundle'
+
+on:
+  workflow_call:
+    inputs:
+      new_version:
+        description: 'The target version for this bundle, based on what is currently deployed on the BOINC server'
+        type: string
+        required: true
+      platform:
+        description: 'User friendly platform name used to distinctly name artifacts across platforms'
+        type: string
+        required: true
+      boinc_platform:
+        description: 'Must match one of the platforms in the BOINC server project.xml and https://boinc.berkeley.edu/trac/wiki/BoincPlatforms'
+        type: string
+        required: true
+      wrapper:
+        description: 'Name of the wrapper to use - these get updated every so often and can be found here https://boinc.berkeley.edu/dl/?C=M;O=D'
+        type: string
+        required: true
+      executable:
+        description: 'Executable name as used in naming cxFreeze output binary'
+        type: string
+        required: true
+      app_dir:
+        description: 'Short name of the app as defined in the BOINC server, also the name of the directory where the binaries are deposited'
+        type: string
+        required: true
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    env:
+      NEW_VERSION: ${{ inputs.new_version }}
+      PLATFORM: ${{ inputs.platform }}
+      BOINC_PLATFORM: ${{ inputs.boinc_platform }}
+      WRAPPER: ${{ inputs.wrapper }}
+      EXECUTABLE: ${{ inputs.executable }}
+      APP_DIR: ${{ inputs.app_dir }}
+    steps:
+    - name: "Checkout repository"
+      # https://github.com/actions/checkout
+      uses: actions/checkout@v4
+    - name: "Download BOINC wrapper"
+      # wrapper documentation is outdated, latest wrapper version can be found here https://boinc.berkeley.edu/dl/?C=M;O=D
+      run: |
+        curl -O https://boinc.berkeley.edu/dl/$WRAPPER.zip
+    - name: "Unzip wrapper"
+      run: | 
+        unzip $WRAPPER.zip
+        if [[ -d "$WRAPPER" ]]; then
+          mv $WRAPPER/* .
+        fi
+    - name: "Create job.xml (Windows)"
+      if: ${{ inputs.platform == 'win' }}
+      run: |
+        sed -e "s/{{EXECUTABLE}}/$EXECUTABLE.exe/g" boinc/job_template.xml > job.$NEW_VERSION-$PLATFORM.xml
+    - name: "Create job.xml (non-Windows)"
+      if: ${{ inputs.platform != 'win' }}
+      run: |
+        sed -e "s/{{EXECUTABLE}}/$EXECUTABLE/g" boinc/job_template.xml > job.$NEW_VERSION-$PLATFORM.xml
+    - name: "Create version.xml"
+      run: |
+        sed -e "s/{{WRAPPER}}/$WRAPPER/g" -e "s/{{VERSION}}/$NEW_VERSION/g" -e "s/{{PLATFORM}}/$PLATFORM/g" boinc/version_template.xml > version.xml
+    - name: "Create directory for previously created binaries"
+      run: |
+        mkdir app.$NEW_VERSION-$PLATFORM
+    - name: "Download previously compiled binaries"
+      uses: actions/download-artifact@v4
+      with:
+        name: ${{ env.PLATFORM }}
+        path: app.${{ env.NEW_VERSION }}-${{ env.PLATFORM }}
+    - name: "sign binary and Zip build output"
+      env:
+        SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+      run: |
+        echo "$SIGNING_KEY" > key
+        cd app.$NEW_VERSION-$PLATFORM
+        zip -r ../app.$NEW_VERSION-$PLATFORM.zip .
+    - name: "Sign files"
+      env:
+        SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+      run: |
+        echo "$SIGNING_KEY" > key
+        ./boinc/sign_executable job.$NEW_VERSION-$PLATFORM.xml key > job.$NEW_VERSION-$PLATFORM.xml.sig
+        ./boinc/sign_executable app.$NEW_VERSION-$PLATFORM.zip key > app.$NEW_VERSION-$PLATFORM.zip.sig
+    - name: "Sign executables (Windows)"
+      if: ${{ inputs.platform == 'win' }}
+      env:
+        SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+      run: |
+        ./boinc/sign_executable $WRAPPER.exe key > $WRAPPER.exe.sig
+    - name: "Sign executables (non-Windows)"
+      if: ${{ inputs.platform != 'win' }}
+      env:
+        SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+      run: |
+        ./boinc/sign_executable $WRAPPER key > $WRAPPER.sig
+    - name: "Create app bundle (Windows)"
+      if: ${{ inputs.platform == 'win' }}
+      run: |
+        # Exclude the WRAPPER.exe and WRAPPER.exe.sig from this zip because they are included in app.$NEW_VERSION-$PLATFORM.zip
+        # Including them again could cause issues with duplicate entries when updating versions on the BOINC server.
+        zip -r --junk-paths $BOINC_PLATFORM.zip . -i version.xml job.$NEW_VERSION-$PLATFORM.xml job.$NEW_VERSION-$PLATFORM.xml.sig $WRAPPER.exe $WRAPPER.exe.sig app.$NEW_VERSION-$PLATFORM.zip app.$NEW_VERSION-$PLATFORM.zip.sig
+    - name: "Create app bundle (non-Windows)"
+      if: ${{ inputs.platform != 'win' }}
+      run: |
+        zip -r --junk-paths $BOINC_PLATFORM.zip . -i version.xml job.$NEW_VERSION-$PLATFORM.xml job.$NEW_VERSION-$PLATFORM.xml.sig $WRAPPER $WRAPPER.sig app.$NEW_VERSION-$PLATFORM.zip app.$NEW_VERSION-$PLATFORM.zip.sig
+    - name: "Upload binary to GitHub"
+      uses: actions/upload-artifact@v4
+      with:
+          name: ${{ env.BOINC_PLATFORM }}.zip
+          path: ${{ env.BOINC_PLATFORM }}.zip
+          overwrite: true
+
+    - name: 'Prepare BOINC server access'
+      run: |
+          mkdir -pv ~/.ssh/
+    - name: 'Write key'
+      env:
+        SSH_KEY: ${{ secrets.SSH_KEY }}
+      run: |
+        echo "$SSH_KEY" > ~/.ssh/actions.key
+        chmod 600 ~/.ssh/actions.key
+    - name: 'Write ssh config'
+      run: |
+        cat >>~/.ssh/config <<END
+        Host boinc
+            HostName 172.105.4.251
+            User root
+            IdentityFile ~/.ssh/actions.key
+            StrictHostKeyChecking=no
+            ServerAliveCountMax=10
+            ServerAliveInterval=60
+        END
+    - name: 'Make target directory'
+      if: ${{ ! vars.DO_NOT_DEPLOY }}
+      run: |
+        ssh boinc 'sudo su - boincadm -c "mkdir -p /home/boincadm/projects/boinc/apps/${{env.APP_DIR}}/${{env.NEW_VERSION}}"'
+    - name: 'Copy binaries to server'
+      if: ${{ ! vars.DO_NOT_DEPLOY }}
+      run: |
+        scp $BOINC_PLATFORM.zip boinc:/home/boincadm/projects/boinc/apps/${{env.APP_DIR}}/${{env.NEW_VERSION}}
+        ssh boinc 'sudo su - boincadm -c "chown boincadm /home/boincadm/projects/boinc/apps/${{env.APP_DIR}}/${{env.NEW_VERSION}}"'
+        ssh boinc 'sudo su - boincadm -c "chgrp boincadm /home/boincadm/projects/boinc/apps/${{env.APP_DIR}}/${{env.NEW_VERSION}}"'
+    - name: 'Unpack binaries'
+      if: ${{ ! vars.DO_NOT_DEPLOY }}
+      run: |
+        ssh boinc 'sudo su - boincadm -c "cd /home/boincadm/projects/boinc/apps/${{env.APP_DIR}}/${{env.NEW_VERSION}} && ls && unzip -o -q -d ${{env.BOINC_PLATFORM}} ${{env.BOINC_PLATFORM}}.zip && rm -f ${{env.BOINC_PLATFORM}}.zip && ls"'
+        #ssh boinc 'sudo su - boincadm -c "cd /home/boincadm/projects/boinc/apps/${{env.APP_DIR}}/${{env.NEW_VERSION}}/${{env.BOINC_PLATFORM}} && ls && unzip -o -q app.${{env.NEW_VERSION}}-${{inputs.platform}}.zip && ls "'
+        #ssh boinc 'sudo su - boincadm -c "cd /home/boincadm/projects/boinc/apps/${{env.APP_DIR}}/${{env.NEW_VERSION}}/${{env.BOINC_PLATFORM}} && ls && unzip -o -q app.${{env.NEW_VERSION}}-${{inputs.platform}}.zip && ls && mv app.${{env.NEW_VERSION}}-${{inputs.platform}}/* . && ls"'
+
+    - name: 'Run BOINC update versions'
+      if: ${{ ! vars.DO_NOT_DEPLOY }}
+      run: |
+        ssh boinc 'sudo su - boincadm -c "cd /home/boincadm/projects/boinc && ./bin/update_versions"'

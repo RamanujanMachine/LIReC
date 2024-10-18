@@ -22,7 +22,9 @@ Configured as such:
     If present, no anti-relation logging can happen. Currently supported:
     'PcfCanonical': 'balanced_only' filters to only PCFs of balanced degrees if set to True.
 '''
+import json
 import mpmath as mp
+import os
 from itertools import combinations, product
 import logging
 from math import ceil
@@ -53,6 +55,48 @@ FILTERS = [
         models.Constant.precision.isnot(None)
         #or_(models.Cf.scanned_algo == None, ~models.Cf.scanned_algo.has_key(ALGORITHM_NAME)) # TODO USE scan_history TABLE!!!
         ]
+
+def setup_logging():
+    # Get the absolute path to the root of the project
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    log_file_path = os.path.join(base_dir, 'stderr.txt')
+
+    # Create a logger object
+    logger = logging.getLogger('LIReC')
+    logger.setLevel(logging.DEBUG)  # Set the logging level to debug to capture all messages
+
+    # Create handlers for writing to file and stderr
+    file_handler = logging.FileHandler(log_file_path)
+    stream_handler = logging.StreamHandler()
+    file_handler.flush()
+
+    # Set the level and format for both handlers
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(formatter)
+    stream_handler.setFormatter(formatter)
+
+    # Add both handlers to the logger
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
+
+    logger.info("LOGGING from job_poly_pslq_v1.py enabled")
+
+    return logger
+
+logger = setup_logging()
+
+def write_results_to_file(results, filename):
+    """Writes or appends results to a JSON file while maintaining JSON format."""
+    # existing_data = [2]
+    if (len(results) == 0):
+        logging.info(f'empty result, cancel writting')
+        return
+
+    # Write back to file
+    with open(filename, 'w') as file:
+        json.dump(results, file, indent=4)
+
+    logger.info(f'Results written to {filename}')
 
 def get_filters(filters, const_type):
     filter_list = list(FILTERS) # copy!
@@ -117,6 +161,7 @@ def run_query(filters=None, degree=None, order=None, bulk=None):
     return results
 
 def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, manual=False):
+    results = [] # will store the result list then will be written to output.json so BOINC can receive it
     try: # whole thing must be wrapped so it gets logged
         #configure_logger('analyze_pcfs' if manual else f'pslq_const_worker_{getpid()}')
         i, total_cores, query_data = query_data # SEND_INDEX = True guarantees this
@@ -171,6 +216,9 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
         # because finding new relations depends on the new relations we found so far!
         print_index, PRINT_DELAY = 0, 100
         for consts in product(*subsets):
+            if len(results) >= 2: # result max out at 3 elements as each result object could be huge
+                logging.info(f'surpassed number of result, terminating')
+                break
             if i >= last:
                 logging.info(f'surpassed end of search space slice, terminating')
                 break
@@ -183,10 +231,8 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
             print_msg = f'checking consts: {[c.orig.const_id for c in consts]}'
             if print_index >= PRINT_DELAY:
                 print_index = 0
-                logging.info(print_msg)
             else:
                 print_index += 1
-                #logging.debug(print_msg)
             if not combination_is_old(consts, degree, order, old_relations):
                 # some leeway with the extra 10 precision
                 new_relations = [r for r in check_consts(consts, degree, order, test_prec) if r.precision > PRECISION_RATIO * min(c.precision for c in r.constants) - 10]
@@ -197,6 +243,8 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
                         try:
                             db.session.add_all([to_db_format(r) for r in new_relations])
                             db.session.commit()
+                            results.extend([r.to_json() for r in new_relations])
+                            logging.info('results.len: %d', len(results))
                             old_relations += new_relations
                             break
                         except:
@@ -213,7 +261,8 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
             #        cf.scanned_algo = dict()
             #    cf.scanned_algo[ALGORITHM_NAME] = int(time())
             #db.session.add_all(consts)
-        logging.info(f'finished - found {len(old_relations) - orig_size} results')
+        write_results_to_file(results, 'output.json')
+        logging.info('finished - found %d', len(results))
         db.session.close()
         
         logging.info('Commit done')

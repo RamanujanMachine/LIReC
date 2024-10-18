@@ -1,0 +1,14 @@
+<!-- This file is a necessary component to a BOINC app version -->
+<job_desc>
+    <task>
+        <!-- application should be the executable, i.e. includes .exe on Windows -->
+        <application>{{EXECUTABLE}}</application>
+        <multi_process/>
+        <!-- this command line works - do not change - magic -->
+        <command_line>0001.json</command_line>
+    </task>
+    <unzip_input>
+        <!-- this is a logical file name not a physical one - do not change -->
+        <zipfilename>app.zip</zipfilename>
+    </unzip_input>
+</job_desc>

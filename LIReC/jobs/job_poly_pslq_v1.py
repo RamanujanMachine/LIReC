@@ -245,7 +245,7 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, fi
                             db.session.add_all([to_db_format(r) for r in new_relations])
                             db.session.commit()
                             #results.extend([r.to_json() for r in new_relations])
-                            results.extend(i)
+                            results.extend([i])
                             logging.info('results.len: %d', len(results))
                             old_relations += new_relations
                             break

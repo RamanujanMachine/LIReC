@@ -1,14 +1,14 @@
 configuration = {
     'jobs_to_run': [
         ('poly_pslq_v1', {
-            'args': { 'degree': 5, 'order': 2, 'bulk': 1000, 'filters': {
-                'global': { 'min_precision': 50 },
-                'PcfCanonical': { 'count': 2, 'balanced_only': False },
-                'Named': { 'count': 1, 'addons': ['pi*e'] }
+            'args': { 'degree': 3, 'order': 2, 'bulk': 1000, 'first': 0, 'last': 330, 'filters': {
+                'global': { 'min_precision': 75 },
+                'PcfCanonical': { 'count': 1, 'balanced_only': False, 'addons': ['delta'] },
+                'Named': { 'count': 1, 'names' : ['delta', 'alpha'] }
                 }
             },
             'run_async': False,
-            'async_cores': 2
+            'async_cores': 1
         }),#,
         #'poly_pslq_v2', {
         #    'args': {

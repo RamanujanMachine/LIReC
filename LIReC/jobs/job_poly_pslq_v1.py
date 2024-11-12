@@ -123,19 +123,25 @@ def get_consts(const_type, filters):
     if const_type == 'Named': # Constant first intentionally! don't need extra details, but want to filter still
         precision = filters.get('global', {}).get('min_precision', None)
         named = [c.const_id for c in db.constants]
+        names = filters.get('names', {})
+        if names:
+            named = [c for c in named if c.name in names]
         return [DualConstant.from_db(c) for c in db._get_all(models.Constant) if c.const_id in named and c.precision is not None and (precision is None or c.precision >= precision)]
 
 def relation_is_new(consts, degree, order, other_relations):
     return not any(r for r in other_relations
                    if {c.const_id for c in r.constants} <= {c.orig.const_id for c in consts} and r.details[0] <= degree and r.details[1] <= order)
 
-def add_addons(consts, const_type, filters, all_addons):
+def add_addons(consts, const_type, filters, all_addons, named_addons):
     if not all_addons:
         return consts
     addons = filters.get(const_type, {}).get('addons', [])
-    return consts + [DualConstant.from_db(a.base) for a in all_addons if a.args['name'] in addons]
+    extras = [DualConstant.from_db(a.base) for a in all_addons if a.args['name'] in addons]
+    if not extras: # TODO for now supporting only one or the other... figure out how to do this more properly later
+        extras = [c for c in named_addons if c.name in addons]
+    return consts + extras
 
-def run_query(filters=None, degree=None, order=None, bulk=None):
+def run_query(filters=None, degree=None, order=None, bulk=None, first=None, last=None):
     if not filters:
         return []
     bulk_types = set(filters.keys()) & BULK_TYPES
@@ -160,13 +166,13 @@ def run_query(filters=None, degree=None, order=None, bulk=None):
     logging.info(f'Query done, batch size is {sum(len(results[k]) for k in results)}')
     return results
 
-def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, manual=False):
+def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, first=None, last=None, manual=False):
     results = [] # will store the result list then will be written to output.json so BOINC can receive it
     try: # whole thing must be wrapped so it gets logged
         #configure_logger('analyze_pcfs' if manual else f'pslq_const_worker_{getpid()}')
-        i, total_cores, query_data = query_data # SEND_INDEX = True guarantees this
-        if i == -1: # tells us that we're running sync, but just set i = 0 and continue as normal
-            i = 0
+        index, total_cores, query_data = query_data # SEND_INDEX = True guarantees this
+        if index == -1: # tells us that we're running sync, but just set i = 0 and continue as normal
+            index = 0
         global_filters = filters.get('global', {})
         filters.pop('global', 0) # instead of del so we can silently dispose of global even if it doesn't exist
         if not filters:
@@ -199,13 +205,15 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
                 subsets += [(const_type, get_consts(const_type, {**filters, 'global':global_filters}))]
         
         addons = None
+        addons_named = None
         if any(c for c in filters if 'addons' in filters[c]):
             addons = db.session.query(models.DerivedConstant).filter(models.DerivedConstant.family == ADDON_FAMILY).all()
-        subsets = [list(combinations(add_addons(x, const_type, filters, addons), filters[const_type]['count'])) for const_type, x in subsets]
+            addons_named = db.session.query(models.NamedConstant).all()
+        subsets = [list(combinations(add_addons(x, const_type, filters, addons, addons_named), filters[const_type]['count'])) for const_type, x in subsets]
         total_options = reduce(mul, [len(x) for x in subsets])
-        first, last = ceil((total_options * i) / total_cores), ceil((total_options * (i + 1)) / total_cores)
+        if first == None or last == None:
+            first, last = ceil((total_options * index) / total_cores), ceil((total_options * (index + 1)) / total_cores)
         logging.info(f'search space slice is between {first} and {last}')
-        i = 0
         
         # TODO mass query the many-to-many table! the first call to relation_is_new takes too long!
         old_relations = db.relations()# db.session.query(models.Relation).filter(models.Relation.relation_type==ALGORITHM_NAME).all()
@@ -214,25 +222,18 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
         # even if the commented code were to be uncommented and implemented for
         # the scan_history table, this loop still can't be turned into list comprehension
         # because finding new relations depends on the new relations we found so far!
-        print_index, PRINT_DELAY = 0, 100
-        for consts in product(*subsets):
-            if len(results) >= 2: # result max out at 3 elements as each result object could be huge
-                logging.info(f'surpassed number of result, terminating')
-                break
+        for i, consts in enumerate(product(*subsets)):
+            #if len(results) >= 2: # result max out at 3 elements as each result object could be huge
+            #    logging.info(f'surpassed number of result, terminating')
+            #    break
             if i >= last:
                 logging.info(f'surpassed end of search space slice, terminating')
                 break
-            i += 1
             if i < first:
                 continue
             if i == first:
                 logging.info(f'found start of search space slice, beginning search')
             consts = [c for t in consts for c in t] # need to flatten...
-            print_msg = f'checking consts: {[c.orig.const_id for c in consts]}'
-            if print_index >= PRINT_DELAY:
-                print_index = 0
-            else:
-                print_index += 1
             if not combination_is_old(consts, degree, order, old_relations):
                 # some leeway with the extra 10 precision
                 new_relations = [r for r in check_consts(consts, degree, order, test_prec) if r.precision > PRECISION_RATIO * min(c.precision for c in r.constants) - 10]
@@ -243,7 +244,8 @@ def execute_job(query_data, filters=None, degree=None, order=None, bulk=None, ma
                         try:
                             db.session.add_all([to_db_format(r) for r in new_relations])
                             db.session.commit()
-                            results.extend([r.to_json() for r in new_relations])
+                            #results.extend([r.to_json() for r in new_relations])
+                            results.extend(i)
                             logging.info('results.len: %d', len(results))
                             old_relations += new_relations
                             break

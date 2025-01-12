@@ -20,7 +20,7 @@ class Universal:
         '''
         set the precision (in significant digits in base 10). shared with other classes in this file
         '''
-        mp.mp.dps = prec
+        getcontext().prec = mp.mp.dps = prec
     
     @staticmethod
     def read_oeis(file): # works with the OEIS format, credit where credit is due
@@ -472,7 +472,7 @@ class Constants:
         first lemniscate constant, related to bernoulli's lemniscate.
         OEIS link: http://oeis.org/A085565
         '''
-        return Constants.G() * mp.pi / 2
+        return Constants.G_B() * mp.pi / 2
     
     @staticmethod
     def L_2() -> mpf:
@@ -480,13 +480,13 @@ class Constants:
         second lemniscate constant, related to bernoulli's lemniscate.
         OEIS link: http://oeis.org/A076390
         '''
-        return 0.5 / Constants.G()
+        return 0.5 / Constants.G_B()
     
     @staticmethod
     def L() -> mpf:
         '''
         liouville constant, a special case of liouville numbers.
-        OEIS link: https://oeis.org/A012245
+        Allegedly OEIS lists this constant as https://oeis.org/A012245, but this is actually 10L! OEIS does not currently list the correct value!
         '''
         return mp.nsum(lambda n: mp.power(10, -mp.fac(n)), [1, mp.inf], method='d')
     
@@ -1049,7 +1049,7 @@ class Constants:
     def alpha_GW() -> mpf:
         '''
         goemans williamson constant, related to the max cut problem.
-        OEIS link: https://oeis.org/A203914
+        OEIS lists this constant as https://oeis.org/A203914. However, that value is alpha_GW / pi. We choose to represent it like this instead
         '''
         # uses generic extreme point algorithm, replace f with whatever you need
         f = lambda x: x / (mp.sin(x/2) ** 2)
